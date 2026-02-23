@@ -1,0 +1,668 @@
+import hashlib
+import json
+import logging
+import random
+import re
+import time
+from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
+from typing import Any
+
+import requests
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import RiskBrief
+from app.services.assessment_service import get_llm_runtime_config
+
+logger = logging.getLogger(__name__)
+
+LLM_MAX_ATTEMPTS = 4
+LLM_BACKOFF_BASE_SECONDS = 3.0
+LLM_BACKOFF_JITTER_SECONDS = 1.0
+LLM_BACKOFF_MAX_SECONDS = 45.0
+LLM_QUOTA_COOLDOWN_SECONDS = 900
+
+_llm_quota_block_until = 0.0
+_llm_quota_last_notice = 0.0
+
+# Defensive-only guard: reject outputs that look like usable phishing templates or operational attack instructions.
+PROHIBITED_PATTERN = re.compile(
+    r"(?i)\b("
+    r"spearphish|phishing|credential(s)?|password reset|one[- ]time passcode|otp|"
+    r"wire transfer|bank details|invoice attachment|send the code|verify your account|"
+    r"login link|enter your credentials|click here to|malware|exploit|payload|"
+    r"bypass|evade|step[- ]by[- ]step|use this script|copy and paste"
+    r")\b"
+)
+
+ABSTRACT_TERMS = (
+    "cues",
+    "visibility",
+    "ambiguity",
+    "exposure",
+    "enabled by",
+    "signal bundle",
+    "correlation",
+    "vector",
+    "surface",
+)
+ABSTRACT_TERM_PATTERN = re.compile(
+    r"(?i)\b(cues|visibility|ambiguity|exposure|signal bundle|correlation|vector|surface)\b|enabled by"
+)
+ABSTRACT_REWRITE_PATTERNS: list[tuple[str, str]] = [
+    (r"(?i)\benabled by\b", "driven by"),
+    (r"(?i)\bsignal bundle(s)?\b", "evidence group\\1"),
+    (r"(?i)\bcorrelation\b", "combined support"),
+    (r"(?i)\bvisibility\b", "publicly available details"),
+    (r"(?i)\bambiguity\b", "unclear channel definitions"),
+    (r"(?i)\bexposure\b", "publicly available information"),
+    (r"(?i)\bcues\b", "indicators"),
+    (r"(?i)\bvector\b", "scenario"),
+    (r"(?i)\bsurface\b", "entry point"),
+]
+IMPACT_KEYWORDS = (
+    "financial loss",
+    "fraudulent payment",
+    "data leakage",
+    "unauthorized data disclosure",
+    "account takeover",
+    "operational disruption",
+    "reputational damage",
+)
+
+
+@dataclass(frozen=True)
+class BriefInput:
+    assessment_id: int
+    risk_kind: str
+    risk_id: int
+    title: str
+    risk_type: str
+    severity: int
+    likelihood_badge: str
+    confidence: int
+    evidence: list[dict[str, Any]]
+    primary_risk_type: str = ""
+    risk_vector_summary: str = ""
+    # Evidence-bound context for deterministic/LLM writing.
+    conditions: list[str] = field(default_factory=list)
+    signal_bundles: list[dict[str, Any]] = field(default_factory=list)
+    workflow_nodes: list[dict[str, Any]] = field(default_factory=list)
+    vendor_cues: list[str] = field(default_factory=list)
+    channel_cues: list[str] = field(default_factory=list)
+    impact_targets: list[str] = field(default_factory=list)
+    correlation_hint: str = ""
+
+
+def _hash_input(inp: BriefInput) -> str:
+    conditions = [str(x) for x in (inp.conditions or []) if str(x).strip()][:3]
+    vendor_cues = [str(x) for x in (inp.vendor_cues or []) if str(x).strip()][:8]
+    channel_cues = [str(x) for x in (inp.channel_cues or []) if str(x).strip()][:8]
+    impact_targets = [str(x) for x in (inp.impact_targets or []) if str(x).strip()][:5]
+    blob = json.dumps(
+        {
+            "title": inp.title,
+            "risk_type": inp.risk_type,
+            "primary_risk_type": inp.primary_risk_type,
+            "risk_vector_summary": inp.risk_vector_summary,
+            "conditions": conditions,
+            "vendor_cues": vendor_cues,
+            "channel_cues": channel_cues,
+            "impact_targets": impact_targets,
+            "severity": int(inp.severity),
+            "likelihood": inp.likelihood_badge,
+            "confidence": int(inp.confidence),
+            "correlation_hint": inp.correlation_hint,
+            "evidence": [
+                {
+                    "bucket": e.get("bucket_key", ""),
+                    "url": e.get("url", ""),
+                    "snippet": (e.get("snippet", "") or "")[:220],
+                    "confidence": int(e.get("confidence", 50) or 50),
+                }
+                for e in (inp.evidence or [])[:12]
+            ],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _contains_prohibited(text: str) -> bool:
+    return bool(PROHIBITED_PATTERN.search(text or ""))
+
+
+def _avg_conf(evidence: list[dict[str, Any]]) -> int:
+    vals = []
+    for e in evidence or []:
+        try:
+            vals.append(int(e.get("confidence", 50) or 50))
+        except Exception:
+            continue
+    if not vals:
+        return 0
+    return int(sum(vals) / len(vals))
+
+
+def _bucket_counts(evidence: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for e in evidence or []:
+        key = str(e.get("bucket_key", "website") or "website")
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _contains_abstract_terms(text: str) -> bool:
+    return bool(ABSTRACT_TERM_PATTERN.search(text or ""))
+
+
+def _rewrite_abstract_terms(text: str) -> str:
+    out = str(text or "")
+    for patt, repl in ABSTRACT_REWRITE_PATTERNS:
+        out = re.sub(patt, repl, out)
+    return " ".join(out.split())
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", " ".join(str(text or "").split()).strip()) if p.strip()]
+    return parts
+
+
+def _first_paragraph(text: str) -> str:
+    sents = _split_sentences(text)
+    if not sents:
+        return ""
+    return " ".join(sents[:2]).strip()
+
+
+def _has_impact_keyword(text: str) -> bool:
+    low = str(text or "").lower()
+    return any(k in low for k in IMPACT_KEYWORDS)
+
+
+def _attack_type_from_input(inp: BriefInput) -> str:
+    rt = str(inp.risk_type or "").strip().lower()
+    primary = str(inp.primary_risk_type or "").strip().lower()
+    blob = " ".join(
+        [
+            " ".join(_normalize_list(inp.conditions, max_items=5)),
+            " ".join(_normalize_list(inp.channel_cues, max_items=10)),
+            " ".join(_normalize_list(inp.vendor_cues, max_items=10)),
+            " ".join(str(b.get("title", "")) for b in (inp.signal_bundles or []) if isinstance(b, dict)),
+            " ".join(str(w.get("title", "")) for w in (inp.workflow_nodes or []) if isinstance(w, dict)),
+        ]
+    ).lower()
+
+    if any(x in blob for x in ("account recovery", "password", "login", "credential")) or rt in {"credential_theft_risk"} or "account takeover" in primary:
+        return "Account takeover via identity verification abuse"
+    if any(x in blob for x in ("payment", "billing", "invoice", "checkout", "booking modification", "reservation change")) or rt in {"fraud_process"}:
+        return "Fraudulent payment or invoice redirection"
+    if any(x in blob for x in ("privacy", "data subject", "gdpr", "cndp", "data protection")) or rt in {"privacy_data_risk"}:
+        return "Unauthorized personal data disclosure"
+    if any(x in blob for x in ("dmarc", "spf", "spoof")):
+        return "Spoofed email impersonation"
+    if any(x in blob for x in ("finance", "procurement", "it support", "dpo", "executive", "role")):
+        return "Targeted social engineering against identifiable staff"
+    if any(x in blob for x in ("contact", "phone", "email", "press contact", "support channel", "official channel")) or rt in {
+        "impersonation",
+        "brand_abuse",
+        "downstream_pivot",
+        "social_trust_surface_exposure",
+    }:
+        return "Impersonation of official contact channels"
+    return "Impersonation of official contact channels"
+
+
+def _impact_from_input(inp: BriefInput) -> str:
+    rt = str(inp.risk_type or "").strip().lower()
+    primary = str(inp.primary_risk_type or "").strip().lower()
+    blob = " ".join(
+        [
+            " ".join(_normalize_list(inp.conditions, max_items=5)),
+            " ".join(_normalize_list(inp.channel_cues, max_items=10)),
+            " ".join(_normalize_list(inp.vendor_cues, max_items=10)),
+            " ".join(str(w.get("title", "")) for w in (inp.workflow_nodes or []) if isinstance(w, dict)),
+            " ".join(str(x) for x in (inp.impact_targets or []) if str(x).strip()),
+        ]
+    ).lower()
+
+    if any(x in blob for x in ("payment", "billing", "invoice", "checkout", "booking", "reservation")) or rt in {"fraud_process"}:
+        return "fraudulent payments and financial loss"
+    if any(x in blob for x in ("privacy", "data subject", "data request", "personal data")) or rt in {"privacy_data_risk"} or "data handling" in primary:
+        return "unauthorized data disclosure and reputational damage"
+    if any(x in blob for x in ("password", "login", "account recovery", "credential")) or rt in {"credential_theft_risk"}:
+        return "account takeover and operational disruption"
+    if any(x in blob for x in ("partner", "client", "guest")) or rt in {"impersonation", "downstream_pivot", "brand_abuse"}:
+        return "fraudulent requests, operational disruption, and reputational damage"
+    return "operational disruption and reputational damage"
+
+
+def _mechanism_phrase(inp: BriefInput, *, max_conditions: int = 2) -> str:
+    conds = [" ".join(str(x).split()).strip() for x in (inp.conditions or []) if str(x).strip()]
+    if len(conds) >= 2:
+        return f"{conds[0]} and {conds[1]}"
+    if conds:
+        return conds[0]
+    wf = [str(w.get("title", "")).strip() for w in (inp.workflow_nodes or []) if isinstance(w, dict) and str(w.get("title", "")).strip()]
+    if wf:
+        return "publicly documented operational workflows"
+    return "publicly identifiable communication channels and process details"
+
+
+def _retry_after_seconds(headers: dict[str, Any] | Any) -> float:
+    raw = str((headers or {}).get("Retry-After", "")).strip()
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except Exception:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt is None:
+            return 0.0
+        now = time.time()
+        return max(0.0, dt.timestamp() - now)
+    except Exception:
+        return 0.0
+
+
+def _is_quota_exhausted_response(res: requests.Response) -> bool:
+    if int(res.status_code or 0) != 429:
+        return False
+    code = ""
+    err_type = ""
+    msg = ""
+    try:
+        body = res.json() if res is not None else {}
+        err = body.get("error", {}) if isinstance(body, dict) else {}
+        code = str(err.get("code", "") or "").strip().lower()
+        err_type = str(err.get("type", "") or "").strip().lower()
+        msg = str(err.get("message", "") or "").strip().lower()
+    except Exception:
+        return False
+    return (
+        code in {"insufficient_quota", "billing_hard_limit_reached"}
+        or err_type in {"insufficient_quota"}
+        or "exceeded your current quota" in msg
+    )
+
+
+def _quota_block_active() -> bool:
+    return time.time() < float(_llm_quota_block_until or 0.0)
+
+
+def _maybe_log_quota_notice(caller: str) -> None:
+    global _llm_quota_last_notice
+    now = time.time()
+    if (now - float(_llm_quota_last_notice or 0.0)) >= 60.0:
+        remaining = int(max(0.0, float(_llm_quota_block_until or 0.0) - now))
+        logger.warning(
+            "%s LLM quota block active (cooldown %ss). Using local fallback without API retries.",
+            caller,
+            remaining,
+        )
+        _llm_quota_last_notice = now
+
+
+def _post_llm_with_backoff(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout_seconds: int,
+    caller: str,
+) -> requests.Response | None:
+    global _llm_quota_block_until
+    last_response: requests.Response | None = None
+    if _quota_block_active():
+        _maybe_log_quota_notice(caller)
+        return None
+    for attempt in range(LLM_MAX_ATTEMPTS):
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=timeout_seconds)
+            last_response = res
+            if res.status_code < 400:
+                return res
+            if _is_quota_exhausted_response(res):
+                _llm_quota_block_until = time.time() + float(LLM_QUOTA_COOLDOWN_SECONDS)
+                logger.warning(
+                    "%s LLM quota exhausted (status=429 insufficient_quota). Blocking API retries for %ss.",
+                    caller,
+                    int(LLM_QUOTA_COOLDOWN_SECONDS),
+                )
+                return res
+            retriable = res.status_code == 429 or res.status_code >= 500
+            is_last = attempt >= (LLM_MAX_ATTEMPTS - 1)
+            if not retriable or is_last:
+                return res
+            retry_after = _retry_after_seconds(res.headers)
+            backoff = min(
+                LLM_BACKOFF_MAX_SECONDS,
+                (LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
+            )
+            wait_seconds = max(retry_after, backoff)
+            logger.warning(
+                "%s LLM transient failure status=%s attempt=%s/%s wait=%.2fs",
+                caller,
+                res.status_code,
+                attempt + 1,
+                LLM_MAX_ATTEMPTS,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+        except requests.RequestException as exc:
+            is_last = attempt >= (LLM_MAX_ATTEMPTS - 1)
+            if is_last:
+                logger.warning("%s LLM request error after retries: %s", caller, exc)
+                return last_response
+            backoff = min(
+                LLM_BACKOFF_MAX_SECONDS,
+                (LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
+            )
+            logger.warning(
+                "%s LLM transport error attempt=%s/%s wait=%.2fs err=%s",
+                caller,
+                attempt + 1,
+                LLM_MAX_ATTEMPTS,
+                backoff,
+                exc,
+            )
+            time.sleep(backoff)
+    return last_response
+
+
+def _local_brief(inp: BriefInput, *, variant_offset: int = 0) -> str:
+    attack = _attack_type_from_input(inp)
+    impact = _impact_from_input(inp)
+    mechanism = _mechanism_phrase(inp)
+
+    # Deterministic variant selection to reduce repetition while staying evidence-bound.
+    seed = int(_hash_input(inp)[:8], 16) + int(variant_offset or 0)
+    variant_tail = [
+        "Current records suggest this scenario is plausible but still requires validation against official process documentation.",
+        "Available records indicate this is plausible, while final confirmation depends on process-level checks.",
+        "Collected records support plausibility, but final confidence depends on validating official controls and channel governance.",
+    ][seed % 3]
+
+    primary_groups = [str(x) for x in (inp.impact_targets or []) if str(x).strip()]
+    impacted = ", ".join(primary_groups[:3]) if primary_groups else "customers, partners, and frontline teams"
+
+    first = f"An external actor could {attack.lower()} by exploiting {mechanism}. If successful, this may result in {impact}."
+    lines: list[str] = [
+        first,
+        variant_tail,
+        f"Primary impact zones: {impacted}.",
+        "Why it matters: official contact paths and communication methods are publicly identifiable, which can increase the chance of fraudulent or misrouted requests.",
+        "Next verification: publish a signed list of official channels and require out-of-band verification for payment, account, or data-change requests.",
+    ]
+    return _rewrite_abstract_terms(" ".join(lines)[:950])
+
+
+def _normalize_list(value: Any, *, max_items: int) -> list[str]:
+    out: list[str] = []
+    for x in (value or [])[:max_items]:
+        s = " ".join(str(x or "").split()).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _shingle_similarity(a: str, b: str, *, n: int = 3) -> float:
+    def _shingles(s: str) -> set[str]:
+        toks = [t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if t]
+        if len(toks) < n:
+            return set([" ".join(toks)]) if toks else set()
+        return set(" ".join(toks[i : i + n]) for i in range(0, len(toks) - n + 1))
+
+    sa = _shingles(a)
+    sb = _shingles(b)
+    if not sa or not sb:
+        return 0.0
+    inter = len(sa.intersection(sb))
+    union = len(sa.union(sb))
+    return float(inter) / float(union or 1)
+
+
+def _validate_brief_text(text: str, *, inp: BriefInput, recent_briefs: list[str]) -> tuple[bool, str]:
+    t = " ".join(str(text or "").split()).strip()
+    if not t:
+        return False, "empty"
+    first_para = _first_paragraph(t)
+    attack = _attack_type_from_input(inp)
+    if not first_para:
+        return False, "missing_first_paragraph"
+    if "an external actor could" not in first_para.lower():
+        return False, "missing_first_paragraph_template"
+    if "if successful, this may result in" not in first_para.lower():
+        return False, "missing_impact_sentence"
+    if attack.lower() not in first_para.lower():
+        return False, "missing_attack_type"
+    if not _has_impact_keyword(first_para):
+        return False, "missing_impact_keyword"
+    if _contains_abstract_terms(first_para):
+        return False, "contains_abstract_terms"
+
+    # Evidence-text integrity: workflow concepts must be supported by the provided structured context.
+    def _ctx_blob() -> str:
+        bundle_titles = [str(b.get("title", "")) for b in (inp.signal_bundles or []) if isinstance(b, dict)]
+        wf_titles = [str(w.get("title", "")) for w in (inp.workflow_nodes or []) if isinstance(w, dict)]
+        parts = [
+            str(inp.risk_vector_summary or ""),
+            " ".join([str(x) for x in (inp.conditions or [])]),
+            " ".join(bundle_titles),
+            " ".join(wf_titles),
+            " ".join([str(x) for x in (inp.channel_cues or [])]),
+            " ".join([str(x) for x in (inp.vendor_cues or [])]),
+        ]
+        return " ".join(parts).lower()
+
+    ctx = _ctx_blob()
+    out_low = t.lower()
+    allows_payment = any(k in ctx for k in ("payment", "billing", "invoice", "refund", "stripe", "adyen", "paypal"))
+    allows_booking = any(k in ctx for k in ("booking", "reservation", "concierge", "guest"))
+    allows_donation = any(k in ctx for k in ("donation", "donate", "fundraising", "beneficiary"))
+    allows_account = any(k in ctx for k in ("password", "login", "credentials", "account", "mfa", "otp", "sso"))
+    allows_social = any(k in ctx for k in ("instagram", "linkedin", "facebook", "tiktok", "youtube", "x.com", "twitter", "social", "dm", "direct message"))
+    if any(k in out_low for k in ("payment", "billing", "invoice", "refund")) and not allows_payment:
+        return False, "unreferenced_workflow:payment"
+    if any(k in out_low for k in ("booking", "reservation", "concierge")) and not allows_booking:
+        return False, "unreferenced_workflow:booking"
+    if any(k in out_low for k in ("donation", "donate", "fundraising", "beneficiary")) and not allows_donation:
+        return False, "unreferenced_workflow:donation"
+    if any(k in out_low for k in ("password", "login", "credentials", "account takeover")) and not allows_account:
+        return False, "unreferenced_workflow:account"
+    if any(k in out_low for k in ("direct message", " dm ", "via dm")) and not allows_social:
+        return False, "unreferenced_channel:social_dm"
+
+    # Must not introduce vendor cues not provided.
+    allowed_vendors = {v.lower() for v in _normalize_list(inp.vendor_cues, max_items=20)}
+    for kw in [k for k in ("zendesk","freshdesk","intercom","salesforce","hubspot","stripe","adyen","paypal","cloudflare","akamai","okta","auth0","recaptcha","google tag manager","microsoft 365")]:
+        if kw in t.lower():
+            if not any(kw in v for v in allowed_vendors):
+                return False, f"unreferenced_vendor:{kw}"
+    if "Next verification:" not in t:
+        return False, "missing_next_verification"
+    if _contains_abstract_terms(first_para):
+        return False, "contains_abstract_terms"
+    if _contains_prohibited(t):
+        return False, "prohibited"
+    # Anti-repetition: reject if too similar to recent briefs.
+    for prev in (recent_briefs or [])[:8]:
+        if _shingle_similarity(t, prev) >= 0.60:
+            return False, "too_similar"
+    return True, "ok"
+
+
+def _call_llm(*, api_key: str, model: str, inp: BriefInput, retry_hint: str = "") -> str | None:
+    # Evidence-bound structured context (LLM is only used for wording at temperature=0).
+    attack_type = _attack_type_from_input(inp)
+    impact_phrase = _impact_from_input(inp)
+    payload_ctx = {
+        "primary_risk_type": inp.primary_risk_type,
+        "risk_vector_summary": inp.risk_vector_summary,
+        "attack_type_phrase": attack_type,
+        "impact_phrase": impact_phrase,
+        "signal_bundles": (inp.signal_bundles or [])[:6],
+        "workflow_nodes": (inp.workflow_nodes or [])[:6],
+        "vendor_cues": _normalize_list(inp.vendor_cues, max_items=10),
+        "channel_cues": _normalize_list(inp.channel_cues, max_items=10),
+        "impact_targets": _normalize_list(inp.impact_targets, max_items=5),
+        "conditions": _normalize_list(inp.conditions, max_items=3),
+    }
+    system_prompt = (
+        "You are a senior Cyber Threat Intelligence (CTI) analyst and defensive risk advisor. "
+        "You must be evidence-first and defensive-only. "
+        "Do NOT produce phishing emails, message templates, social-engineering scripts, or operational offensive steps. "
+        "Do NOT ask for credentials or include real links as part of a lure. "
+        "Your job is to explain what the indicators are, how they correlate, uncertainty, and defensive actions to reduce risk."
+    )
+    user_prompt = (
+        "Write a short executive risk brief based strictly on the structured evidence context below.\n"
+        "Constraints:\n"
+        "- 120 to 200 words.\n"
+        "- Temperature is 0: be consistent and deterministic.\n"
+        "- Use probabilistic language and mention uncertainty.\n"
+        "- Use concrete language focused on realistic attacker behavior and business impact.\n"
+        "- Include a final sentence: 'Next verification:' followed by 1-2 concrete defensive verification items.\n"
+        "- No offensive instructions. No phishing templates. No ready-to-send messages.\n\n"
+        "Mandatory first paragraph format (2 sentences):\n"
+        f"1) \"An external actor could {attack_type.lower()} by exploiting [mechanism from provided evidence].\"\n"
+        f"2) \"If successful, this may result in {impact_phrase}.\"\n\n"
+        "Rules:\n"
+        "- Only use the exact bundle titles / workflow node titles / cues provided in JSON.\n"
+        "- Do not introduce new vendors, channels, or workflows.\n"
+        "- Do not introduce a different risk type.\n"
+        f"- Do not use these terms in the first paragraph: {', '.join(ABSTRACT_TERMS)}.\n"
+        f"{('Retry hint: ' + retry_hint) if retry_hint else ''}\n\n"
+        "JSON context:\n"
+        + json.dumps(payload_ctx, ensure_ascii=True)
+    )
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        res = _post_llm_with_backoff(
+            url="https://api.openai.com/v1/chat/completions",
+            payload=payload,
+            headers=headers,
+            timeout_seconds=35,
+            caller="RiskBrief",
+        )
+        if res is None:
+            logger.warning("Risk brief LLM request failed after retry attempts without response")
+            return None
+        if res.status_code >= 400:
+            logger.warning("Risk brief LLM request failed: status=%s body=%s", res.status_code, res.text[:400])
+            return None
+        body = res.json()
+        content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+        text = " ".join(str(content or "").split())
+        if not text:
+            return None
+        text = _rewrite_abstract_terms(text)
+        if _contains_prohibited(text):
+            logger.warning("Risk brief blocked by safety filter")
+            return None
+        return text[:1100]
+    except Exception:
+        logger.exception("Risk brief LLM request failed unexpectedly")
+        return None
+
+
+def get_or_generate_brief(db: Session, inp: BriefInput) -> str:
+    evidence = inp.evidence or []
+    avg_conf = _avg_conf(evidence)
+    if len(evidence) < 2 or avg_conf < 45:
+        return (
+            "Insufficient evidence coverage to produce an executive brief. "
+            "Run collection again and review RAG Debug to confirm key pages/documents were indexed."
+        )
+
+    input_hash = _hash_input(inp)
+    existing = db.execute(
+        select(RiskBrief).where(
+            RiskBrief.assessment_id == inp.assessment_id,
+            RiskBrief.risk_kind == inp.risk_kind,
+            RiskBrief.risk_id == inp.risk_id,
+            RiskBrief.input_hash == input_hash,
+        )
+        .order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc())
+        .limit(1)
+    ).scalars().first()
+    if existing and (existing.brief or "").strip():
+        return existing.brief
+
+    llm_cfg = get_llm_runtime_config(db)
+    model = str(llm_cfg.get("model") or "LOCAL").strip()
+    api_key = str(llm_cfg.get("api_key") or "").strip()
+    is_local = model.upper() == "LOCAL" or not api_key
+
+    recent = [
+        str(x.brief or "")
+        for x in db.execute(
+            select(RiskBrief).where(RiskBrief.assessment_id == inp.assessment_id).order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc()).limit(8)
+        ).scalars().all()
+        if (x.brief or "").strip()
+    ]
+
+    brief = ""
+    if is_local:
+        brief = _local_brief(inp, variant_offset=0)
+        # Anti-repetition for LOCAL mode: if too similar to recent briefs, switch deterministic variant.
+        for off in (1, 2):
+            if not recent:
+                break
+            if any(_shingle_similarity(brief, prev) >= 0.60 for prev in recent[:8]):
+                brief = _local_brief(inp, variant_offset=off)
+            else:
+                break
+        brief = _rewrite_abstract_terms(brief)
+    else:
+        # One retry with stricter instruction if validation fails.
+        last_reason = ""
+        for attempt in range(0, 2):
+            hint = ""
+            if attempt == 1:
+                hint = (
+                    "Strict rewrite required. Previous draft failed validation: "
+                    f"{last_reason or 'unknown'}. Keep only concrete attacker action, concrete mechanism, and concrete impact in first paragraph."
+                )
+            out = _call_llm(api_key=api_key, model=model, inp=inp, retry_hint=hint)
+            if not out:
+                continue
+            out = _rewrite_abstract_terms(out)
+            ok, reason = _validate_brief_text(out, inp=inp, recent_briefs=recent)
+            if ok:
+                brief = out
+                break
+            last_reason = reason
+        if not brief:
+            brief = _local_brief(inp, variant_offset=0)
+
+    if _contains_prohibited(brief):
+        brief = _local_brief(inp, variant_offset=0)
+    brief = _rewrite_abstract_terms(brief)
+    ok_final, _ = _validate_brief_text(brief, inp=inp, recent_briefs=[])
+    if not ok_final:
+        brief = _local_brief(inp, variant_offset=1)
+        brief = _rewrite_abstract_terms(brief)
+
+    row = RiskBrief(
+        assessment_id=inp.assessment_id,
+        risk_kind=inp.risk_kind[:32],
+        risk_id=int(inp.risk_id),
+        input_hash=input_hash,
+        model=("LOCAL" if is_local else model)[:64],
+        brief=brief,
+    )
+    db.add(row)
+    db.commit()
+    return brief

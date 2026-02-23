@@ -1,0 +1,24 @@
+{
+  "confidence": 67,
+  "meta": {
+    "signal_counts": {
+      "CONTACT_CHANNEL": 1,
+      "PROCESS_CUE": 1,
+      "VENDOR_CUE": 1
+    },
+    "signal_diversity_count": 3,
+    "weighted_evidence_count": 3,
+    "distinct_url_count": 3,
+    "repetition_ratio": 0.333,
+    "domain_repetition_ratio": 1.0,
+    "repetition_penalty_applied": true,
+    "missing_required_signal": false,
+    "has_critical_signal": true,
+    "has_process_cue": true,
+    "attention_spike": false,
+    "contact_only": false,
+    "mostly_contact_only": false,
+    "policy_only": false,
+    "missing_signals": []
+  }
+}

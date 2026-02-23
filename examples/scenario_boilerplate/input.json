@@ -1,0 +1,18 @@
+[
+  {
+    "url": "https://www.googletagmanager.com/gtm.js?id=GTM-123",
+    "snippet": "analytics tag manager pixel",
+    "signal_type": "VENDOR_CUE",
+    "is_boilerplate": true,
+    "weight": 0.05,
+    "quality_tier": "BOILERPLATE"
+  },
+  {
+    "url": "https://example.org/privacy",
+    "snippet": "standard privacy policy content",
+    "signal_type": "UNCLASSIFIED",
+    "is_boilerplate": true,
+    "weight": 0.10,
+    "quality_tier": "BOILERPLATE"
+  }
+]

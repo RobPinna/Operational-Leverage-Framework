@@ -1,0 +1,24 @@
+{
+  "confidence": 47,
+  "meta": {
+    "signal_counts": {},
+    "signal_diversity_count": 0,
+    "weighted_evidence_count": 0,
+    "distinct_url_count": 0,
+    "repetition_ratio": 0.0,
+    "domain_repetition_ratio": 0.0,
+    "repetition_penalty_applied": false,
+    "missing_required_signal": true,
+    "has_critical_signal": false,
+    "has_process_cue": false,
+    "attention_spike": false,
+    "contact_only": false,
+    "mostly_contact_only": false,
+    "policy_only": false,
+    "missing_signals": [
+      "Process cue",
+      "Vendor cue",
+      "Org cue"
+    ]
+  }
+}

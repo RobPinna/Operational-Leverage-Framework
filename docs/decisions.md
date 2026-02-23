@@ -1,0 +1,26 @@
+# Design Decisions
+
+## Decision 1: Keep FastAPI app structure stable
+- Choice: preserve existing `app/` runtime layout to avoid regressions.
+- Why: project already has end-to-end behavior and domain logic coupled to templates/connectors.
+- Tradeoff: full package migration is incremental rather than immediate.
+
+## Decision 2: Add typed public package for reusable scoring
+- Choice: introduce `src/operational_leverage_framework` with explicit `core/io/models/cli`.
+- Why: provide a clean public API boundary for portfolio usage and offline demos.
+- Tradeoff: temporary dual-path imports (`app/services` and package wrappers).
+
+## Decision 3: Deterministic offline examples
+- Choice: examples use local JSON evidence inputs and deterministic scoring.
+- Why: reproducible outputs for reviewers without connector/API dependencies.
+- Tradeoff: examples represent a narrow subset of full workflow complexity.
+
+## Decision 4: Quality gates with scoped mypy
+- Choice: enforce Ruff/pytest globally and mypy on typed boundary modules.
+- Why: practical maintainability without blocking on complete typing of all legacy paths.
+- Tradeoff: some deeper modules remain outside strict type coverage.
+
+## Decision 5: Standardize local launcher
+- Choice: use `start-dev.cmd` as the primary Windows entrypoint and keep `ExposureMapperTI.cmd` as a wrapper.
+- Why: one predictable startup command for GitHub users and consistency across portfolio repos.
+- Tradeoff: launcher remains Windows-specific while CLI commands stay cross-platform.

@@ -1,0 +1,26 @@
+[
+  {
+    "url": "https://riadgroup-demo.local/contact",
+    "snippet": "Support desk contact: support@riadgroup-demo.local",
+    "signal_type": "CONTACT_CHANNEL",
+    "is_boilerplate": false,
+    "weight": 0.60,
+    "quality_tier": "MED"
+  },
+  {
+    "url": "https://riadgroup-demo.local/billing",
+    "snippet": "Billing change requests require verification process.",
+    "signal_type": "PROCESS_CUE",
+    "is_boilerplate": false,
+    "weight": 0.80,
+    "quality_tier": "HIGH"
+  },
+  {
+    "url": "https://riadgroup-demo.local/vendors",
+    "snippet": "Checkout relies on Stripe payment integration.",
+    "signal_type": "VENDOR_CUE",
+    "is_boilerplate": false,
+    "weight": 0.90,
+    "quality_tier": "HIGH"
+  }
+]
