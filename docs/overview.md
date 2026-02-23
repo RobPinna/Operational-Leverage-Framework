@@ -25,9 +25,8 @@ flowchart LR
 - Exported PDF and JSON artifacts for stakeholder communication.
 
 ## Operational behavior
-- One-command local startup on Windows: `start-dev.cmd`.
-- The launcher opens `http://127.0.0.1:56461` after the app is reachable.
-- Legacy shortcut `ExposureMapperTI.cmd` is kept as a wrapper for compatibility.
+- One-command local startup (Windows/Linux/macOS): `python scripts/run.py web`.
+- The runner opens `http://127.0.0.1:56461` after the app is reachable (unless `--no-browser` is set).
 
 ## Limits and assumptions
 - Confidence is heuristic and evidence-dependent.

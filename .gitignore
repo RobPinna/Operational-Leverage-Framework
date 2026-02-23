@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local environment files
+.env
+!.env.example
+
+# Local database/runtime artifacts
+*.db
+*.db-journal
+*.db-wal
+
+# Runtime export artifacts
+exports/**/*.json
+exports/**/*.pdf
+exports/rag_indexes/
+
+# Local scratch artifacts
+py_write_test.txt

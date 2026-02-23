@@ -1,128 +1,66 @@
-# Operational Leverage Framework
+﻿# Operational Leverage Framework
 
-Operational Leverage Framework is a defensive, evidence-first CTI/cyber risk assessment project that maps public exposure signals into actionable risk narratives.
+Operational Leverage Framework is an evidence-first CTI/cyber risk assessment project that maps public exposure signals into actionable confidence outputs.
 
-## Disclaimer
-- Educational/research repository.
-- Not a security product.
-- No guarantees of completeness, correctness, or fitness for operational decisions.
-
-## What / Why / Output
-- What: ingest and score public-facing evidence signals (contact channels, workflows, vendor cues, org cues).
-- Why: convert noisy exposure evidence into structured confidence and risk-to-action communication.
-- Output:
-  - confidence + signal metadata
-  - assessment narratives (UI)
-  - exported JSON/PDF reports
+## Prerequisites
+- Python `>=3.11` (from `pyproject.toml`).
+- Optional: `OPENAI_API_KEY` only if you want OpenAI-backed reasoning features.
 
 ## Quickstart (3 commands)
+From repository root:
+
 ```bash
-py -3 -m pip install -e ".[dev]"
-pytest
-py -3 -m operational_leverage_framework.cli.main examples/scenario_hospitality/input.json --out examples/output/hospitality.json --risk-type impersonation
+python scripts/run.py setup --venv
+python scripts/run.py test
+python scripts/run.py cli
 ```
 
 ## Come usare il progetto (release GitHub)
 1. Clona il repository.
-2. Crea il file locale di configurazione:
+2. Crea `.env` partendo da `.env.example`:
 ```bat
 copy .env.example .env
 ```
-3. Sostituisci i placeholder in `.env`:
-- File: `.env`
-  Placeholder: `SECRET_KEY=change-me-exposuremapper-secret`
-  Cosa mettere: una stringa casuale lunga per sessioni/app.
-- File: `.env`
-  Placeholder: `PASSWORD_PEPPER=change-me-password-pepper`
-  Cosa mettere: pepper privato usato per hashing password.
-- File: `.env`
-  Placeholder: `API_KEY_PEPPER=change-me-api-key-pepper`
-  Cosa mettere: pepper privato per cifratura/obfuscation chiavi.
-- File: `.env`
-  Placeholder: `DEFAULT_ADMIN_PASSWORD=change-me-admin-password`
-  Cosa mettere: password admin locale forte.
-- File: `.env`
-  Placeholder: `OPENAI_API_KEY=`
-  Cosa mettere: opzionale. Lascia vuoto per modalità local/offline.
-4. Avvio web app:
-```bat
-start-dev.cmd
-```
-5. Verifica release-safety prima della pubblicazione:
-```bat
-release-safety-check.cmd
-```
-
-## Full web app shortcut
-From the repository root on Windows:
-```bat
-start-dev.cmd
-```
-
-What it does:
-- creates `.venv` if missing
-- installs backend dependencies from `requirements.txt`
-- starts FastAPI app on `http://127.0.0.1:56461`
-- opens homepage automatically at `http://127.0.0.1:56461`
-- keeps `exports/` as runtime folder (placeholder-only in public release)
-
-Optional:
-```bat
-start-dev.cmd --no-browser
-```
-
-## Real example (local run)
-Command:
 ```bash
-py -3 -m operational_leverage_framework.cli.main examples/scenario_hospitality/input.json --out examples/output/hospitality.json --risk-type impersonation
+cp .env.example .env
+```
+3. Sostituisci i placeholder in `.env`:
+- `SECRET_KEY=change-me-exposuremapper-secret`
+- `PASSWORD_PEPPER=change-me-password-pepper`
+- `API_KEY_PEPPER=change-me-api-key-pepper`
+- `DEFAULT_ADMIN_PASSWORD=change-me-admin-password`
+- `OPENAI_API_KEY=` (opzionale, lascia vuoto per modalita local/offline)
+4. Avvio web app:
+```bash
+python scripts/run.py web
+```
+5. Avvio web app senza apertura browser:
+```bash
+python scripts/run.py web --no-browser
+```
+6. Verifica release-safety prima della pubblicazione:
+```bash
+python scripts/run.py safety
 ```
 
-Observed output:
-```text
-confidence=67
-wrote=D:\Rob Pinna\Tech\Cybersec\ExposureMapper\examples\output\hospitality.json
-```
+## Cross-Platform Commands
+- Setup: `python scripts/run.py setup --venv`
+- Test: `python scripts/run.py test`
+- CLI default scenario: `python scripts/run.py cli`
+- CLI custom args: `python scripts/run.py cli -- examples/scenario_hospitality/input.json --out examples/output/hospitality.json --risk-type impersonation`
+- Web app: `python scripts/run.py web`
+- Safety checks: `python scripts/run.py safety`
 
-Observed result snippet:
-```json
-{
-  "confidence": 67,
-  "meta": {
-    "signal_diversity_count": 3,
-    "has_critical_signal": true
-  }
-}
-```
+## Expected output
+For the default CLI command (`python scripts/run.py cli`), output is written to:
+- `examples/output/hospitality.json`
 
-## Project layout
-- `start-dev.cmd` one-command launcher (setup + run + open homepage)
-- `ExposureMapperTI.cmd` backward-compatible wrapper to `start-dev.cmd`
-- `app/` FastAPI web app (routers, services, connectors)
-- `src/operational_leverage_framework/` typed public package (`core`, `io`, `models`, `cli`)
-- `src/rag/` local retrieval pipeline
-- `src/reasoner/` hypothesis generation logic
-- `tests/` deterministic offline tests
-- `examples/` runnable evidence scenarios
+The command also prints:
+- `confidence=<value>`
+- `wrote=<absolute-path-to-output-file>`
 
-## Limits and assumptions
-- Confidence scores are heuristic and evidence-quality dependent.
-- Public-source coverage is partial by definition.
-- Optional API connectors may be unavailable in fully offline mode.
-
-## Security notes
-- No telemetry.
-- No hardcoded API keys.
-- Demo examples use sanitized synthetic data.
-
-## Portfolio note
-This repository demonstrates:
-- CTI rigor through evidence-quality weighting and explicit signal coverage.
-- Risk-to-action framing with deterministic confidence computation.
-- Maintainable engineering practice: typed boundaries, tests, CI, and release hygiene.
-
-## Commands
-- Lint: `ruff check .`
-- Format: `ruff format .`
-- Typecheck: `mypy`
-- Test: `pytest`
-- Web app (existing behavior): `uvicorn app.main:app --reload`
+## Troubleshooting
+- `ModuleNotFoundError`: run `python scripts/run.py setup --venv` first.
+- Browser does not open automatically: run `python scripts/run.py web --no-browser` and open `http://127.0.0.1:56461`.
+- OpenAI-related errors: leave `OPENAI_API_KEY=` empty for offline mode, or set a valid key in `.env`.
+- Safety failures on runtime artifacts: remove generated DB/export artifacts, then rerun `python scripts/run.py safety`.

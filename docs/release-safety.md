@@ -9,6 +9,6 @@ Do not redistribute:
 - local virtual environments (`.venv`)
 
 Before publishing:
-1. Run `release-safety-check.cmd`.
+1. Run `python scripts/run.py safety`.
 2. Keep `exports/` placeholder-only.
 3. Verify examples contain sanitized data only.

@@ -21,6 +21,6 @@
 - Tradeoff: some deeper modules remain outside strict type coverage.
 
 ## Decision 5: Standardize local launcher
-- Choice: use `start-dev.cmd` as the primary Windows entrypoint and keep `ExposureMapperTI.cmd` as a wrapper.
-- Why: one predictable startup command for GitHub users and consistency across portfolio repos.
-- Tradeoff: launcher remains Windows-specific while CLI commands stay cross-platform.
+- Choice: use `python scripts/run.py web` as the primary local entrypoint.
+- Why: one predictable cross-platform startup command for GitHub users.
+- Tradeoff: launcher logic is centralized in a Python wrapper script.
