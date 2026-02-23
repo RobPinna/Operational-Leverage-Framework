@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "operational-leverage-framework"
+version = "0.1.0"
+description = "Evidence-first exposure assessment framework for CTI and cyber risk communication."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Rob Pinna" }]
+dependencies = [
+  "dnspython>=2.6,<3",
+  "fastapi>=0.110,<1.0",
+  "itsdangerous>=2.2,<3",
+  "jinja2>=3.1,<4",
+  "playwright>=1.48,<2",
+  "pypdf>=4.2,<5",
+  "python-multipart>=0.0.9,<1",
+  "reportlab>=4.0,<5",
+  "requests>=2.31,<3",
+  "SQLAlchemy>=2.0,<3",
+  "uvicorn[standard]>=0.29,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.15.0",
+  "pre-commit>=4.2.0",
+  "pytest>=8.4.1",
+  "ruff>=0.13.0",
+]
+
+[project.scripts]
+olf-score = "operational_leverage_framework.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/operational_leverage_framework", "src/rag", "src/reasoner", "app", "config"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [".venv", ".backup_tmp_Base_working", "exports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+files = [
+  "src/operational_leverage_framework",
+  "app/services/evidence_quality_classifier.py",
+  "app/services/signal_model.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:tmpdir -p no:cacheprovider"
+norecursedirs = [".venv", "__pycache__", ".backup_tmp_Base_working"]
