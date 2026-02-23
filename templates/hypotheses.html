@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+
+{% block topbar_right %}
+<div class="flex items-center gap-2 flex-wrap justify-end">
+  <form method="get" action="/assessments/{{ assessment.id }}/hypotheses" class="flex items-center gap-2 flex-wrap">
+    <select class="select-dark w-44 text-xs" name="risk_type" aria-label="Type">
+      <option value="">All types</option>
+      {% for t in risk_types %}
+      <option value="{{ t }}" {% if risk_type == t %}selected{% endif %}>
+        {% if t == 'downstream_pivot' %}Risk to Clients via Impersonation{% else %}{{ t }}{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <select class="select-dark w-28 text-xs" name="impact" aria-label="Impact">
+      <option value="">Impact</option>
+      <option value="high" {% if impact == 'high' %}selected{% endif %}>HIGH</option>
+      <option value="med" {% if impact == 'med' %}selected{% endif %}>MED</option>
+      <option value="low" {% if impact == 'low' %}selected{% endif %}>LOW</option>
+    </select>
+    <button class="btn-ghost text-xs" type="submit">Apply</button>
+    <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/hypotheses">Reset</a>
+  </form>
+  <a class="btn-primary text-xs" href="/assessments/new?assessment_id={{ assessment.id }}">Re-assess</a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-shell">
+  <section class="section-stack">
+    <div class="space-y-3">
+      {% for c in cards %}
+      <article class="panel p-4" id="risk-scenario-{{ c.id }}">
+        <header class="flex items-start justify-between gap-3 flex-wrap">
+          <div class="min-w-[220px]">
+            <div class="risk-card-header">
+              <h2 class="risk-card-title">{{ c.title }}</h2>
+              <p class="risk-card-meta">
+                {{ c.query_id }} &middot; scenario #{{ c.id }}
+                <span class="mx-1 text-slate-400">|</span>
+                <span class="badge" data-tooltip="Risk category used for grouping and filtering.">
+                  {% if c.risk_type == 'downstream_pivot' %}Risk to Clients via Impersonation{% else %}{{ c.risk_type }}{% endif %}
+                </span>
+                {% if c.merged_from and c.merged_from > 1 %}
+                <span class="badge" data-tooltip="Merged from {{ c.merged_from }} similar candidates across the query plan.">
+                  Merged
+                </span>
+                {% endif %}
+              </p>
+            </div>
+
+            <div class="mt-4 flex gap-2 flex-wrap items-center">
+              <span class="badge-severity {{ c.severity_label }}" data-tooltip="Severity is a conservative executive grade derived from likelihood + impact.">
+                Impact: {{ c.severity_label | upper }}
+              </span>
+              <span class="badge-likelihood {{ c.likelihood }}" data-tooltip="{{ c.likelihood_rationale if c.likelihood_rationale else 'Likelihood is a probabilistic estimate based on evidence quality and signal diversity.' }}">
+                Likelihood: {{ c.likelihood | upper }}
+              </span>
+              <span class="badge-confidence {{ c.confidence_label }}" data-tooltip="Evidence confidence reflects signal diversity vs repetition. Contact-only evidence is capped.">
+                Confidence: {{ c.confidence }}%
+              </span>
+              <span class="badge" data-tooltip="Signal coverage label: STRONG requires at least 3 distinct signal types and at least one process/vendor/org cue.">
+                Coverage: {{ c.signal_coverage_label }}
+              </span>
+              <span class="badge" data-tooltip="Evidence Quality is derived from non-boilerplate evidence: weighted count, distinct URLs, and signal diversity.">
+                Evidence quality: {{ c.evidence_quality }}
+              </span>
+              {% if c.missing_signals %}
+              <span class="badge" data-tooltip="Missing signals: {{ c.missing_signals | join(', ') }}. Missing signal types reduce confidence and typically indicate collection or visibility gaps.">
+                <i data-lucide="info" class="inline-icon"></i>
+                Missing
+              </span>
+              {% endif %}
+              {% if c.baseline_exposure %}
+              <span class="badge" data-tooltip="Baseline Exposure: common public hospitality artifacts (contact/privacy/social links) without process/vendor/org cues. Not treated as a top elevated risk.">
+                Baseline exposure
+              </span>
+              {% endif %}
+            </div>
+
+            <div class="mt-4 flex gap-2 flex-wrap items-center">
+              {% for p in c.signal_pills %}
+              <span class="signal-pill {% if p.active %}active{% endif %}" data-tooltip="{{ p.tooltip }}">
+                <i data-lucide="{{ p.icon }}" class="signal-icon"></i>
+                <span>{{ p.label }}</span>
+                {% if p.active %}<span class="signal-count">{{ p.count }}</span>{% endif %}
+              </span>
+              {% endfor %}
+            </div>
+
+            <div class="mt-4 flex gap-2 flex-wrap items-center">
+              <button type="button" class="btn-ghost text-xs" data-open-details="brief-{{ c.id }}">Details</button>
+              <button type="button" class="btn-ghost text-xs" data-open-details="evidence-{{ c.id }}">Evidence</button>
+              <button type="button" class="btn-ghost text-xs" data-open-details="timeline-{{ c.id }}">Timeline</button>
+              <button type="button" class="btn-ghost text-xs" data-open-details="actions-{{ c.id }}">Actions</button>
+            </div>
+          </div>
+
+        </header>
+
+        <div class="mt-4 info-card compact">
+          <p class="kpi-label flex items-center gap-2">
+            <i data-lucide="info" class="inline-icon"></i>
+            Why it matters
+          </p>
+          <p class="item-description clamp-2 mt-2 max-w-prose">
+            {{ c.impact_rationale if c.impact_rationale else 'Trust-channel confusion can lead to avoidable financial loss, operational churn, or client trust impact.' }}
+          </p>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="space-y-3">
+          <details class="accordion-item" id="brief-{{ c.id }}">
+            <summary><i data-lucide="file-text" class="inline-icon"></i> Executive Brief</summary>
+            <div class="accordion-body">
+              <p class="item-description max-w-prose">{{ c.description }}</p>
+              {% if c.impact %}
+              <p class="item-meta mt-4">
+                <i data-lucide="target" class="inline-icon"></i>
+                Impact: {{ c.impact }}
+              </p>
+              {% endif %}
+            </div>
+          </details>
+
+          <details class="accordion-item" id="confirmdeny-{{ c.id }}">
+            <summary><i data-lucide="check-circle" class="inline-icon"></i> What would confirm / deny</summary>
+            <div class="accordion-body">
+              <div class="grid md:grid-cols-2 gap-4">
+                <div class="info-card compact">
+                  <p class="kpi-label flex items-center gap-2">
+                    <i data-lucide="check" class="inline-icon"></i>
+                    What would confirm
+                  </p>
+                  <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1 mt-2">
+                    {% for row in c.confirm_points %}
+                    <li>{{ row }}</li>
+                    {% else %}
+                    <li class="text-slate-500">Not enough signals to propose confirmation checks.</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                <div class="info-card compact">
+                  <p class="kpi-label flex items-center gap-2">
+                    <i data-lucide="x" class="inline-icon"></i>
+                    What would deny
+                  </p>
+                  <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1 mt-2">
+                    {% for row in c.deny_points %}
+                    <li>{{ row }}</li>
+                    {% else %}
+                    <li class="text-slate-500">Not enough signals to propose denial checks.</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <details class="accordion-item" id="evidence-{{ c.id }}">
+            <summary><i data-lucide="link" class="inline-icon"></i> Evidence ({{ c.evidence_refs | length }})</summary>
+            <div class="accordion-body">
+              <p class="text-xs text-slate-500 mb-3">
+                Evidence shown here passed relevance validation for this risk type.
+              </p>
+              {% for ev in c.evidence_refs %}
+              <article class="info-card compact">
+                <div class="flex items-center gap-2 flex-wrap mb-1">
+                  <span class="badge" data-tooltip="Signal type used for convergence scoring.">
+                    <i data-lucide="{{ ev.signal_icon }}" class="inline-icon"></i>
+                    {{ ev.signal_label }}
+                  </span>
+                  <span class="badge">Doc {{ ev.doc_id if ev.doc_id is not none else '-' }}</span>
+                  <span class="badge-confidence {{ 'high' if ev.confidence >= 75 else ('med' if ev.confidence >= 50 else 'low') }}">
+                    {{ ev.confidence }}%
+                  </span>
+                  {% if ev.is_boilerplate %}
+                  <span class="badge" data-tooltip="Boilerplate/meta snippet (cookie banner/footer/navigation). Excluded from confidence and distinct URL counts.">
+                    Boilerplate
+                  </span>
+                  {% endif %}
+                </div>
+                <p class="item-description">{{ ev.snippet if ev.snippet else 'No snippet available.' }}</p>
+                {% if show_debug and ev.relevance_debug %}
+                <p class="text-xs text-slate-500 mt-2">
+                  Accepted: score={{ ev.relevance_debug.score }} (min {{ ev.relevance_debug.min_score }}), anchors={{ ev.relevance_debug.anchor_hits }}
+                </p>
+                {% endif %}
+                {% if ev.doc_link %}
+                <a class="link-inline mt-2 inline-block break-all" href="{{ ev.doc_link }}" target="_blank" rel="noopener">{{ ev.doc_title if ev.doc_title else ev.doc_link }}</a>
+                {% elif ev.url %}
+                <a class="link-inline mt-2 inline-block break-all" href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.url }}</a>
+                {% endif %}
+              </article>
+              {% else %}
+              <p class="text-sm text-slate-500">No evidence attached.</p>
+              {% endfor %}
+              {% if show_debug and c.debug and c.debug.relevance and c.debug.relevance.rejected %}
+              <details class="mt-4 accordion-item">
+                <summary><i data-lucide="bug" class="inline-icon"></i> Debug: rejected passages</summary>
+                <div class="accordion-body">
+                  <p class="text-xs text-slate-500 mb-2">These candidates were rejected by the relevance validator (admin-only).</p>
+                  <div class="space-y-2">
+                    {% for r in c.debug.relevance.rejected %}
+                    <div class="info-card compact">
+                      <p class="text-xs text-slate-300 break-all">{{ r.url }}</p>
+                      <p class="text-xs text-slate-500">reasons={{ r.reasons | join(', ') }}, score={{ r.score }}, anchors={{ r.anchor_hits }}</p>
+                    </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </details>
+              {% endif %}
+            </div>
+          </details>
+
+          <details class="accordion-item" id="timeline-{{ c.id }}">
+            <summary><i data-lucide="route" class="inline-icon"></i> Exploitation Timeline (high-level)</summary>
+            <div class="accordion-body">
+              {% if c.timeline and c.timeline | length > 0 %}
+              <div class="timeline-grid">
+                {% for step in c.timeline %}
+                <div class="timeline-step" data-tooltip="{{ step.tooltip }}">
+                  <div class="timeline-bubble {% if step.control_point %}control{% endif %}">
+                    <span class="timeline-index">{{ step.step_index }}</span>
+                    {% if step.control_point %}
+                    <i data-lucide="shield-check" class="timeline-control-icon"></i>
+                    {% endif %}
+                  </div>
+                  <div class="timeline-body">
+                    <p class="timeline-title">{{ step.title }}</p>
+                    <p class="timeline-brief clamp-2">{{ step.brief }}</p>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              <p class="text-xs text-slate-500 mt-3">
+                Control points indicate where verification and approvals should interrupt the sequence.
+              </p>
+              {% else %}
+              <p class="text-sm text-slate-500">Timeline unavailable due to insufficient evidence.</p>
+              {% endif %}
+            </div>
+          </details>
+
+          <details class="accordion-item" id="actions-{{ c.id }}">
+            <summary><i data-lucide="shield" class="inline-icon"></i> Defensive Actions</summary>
+            <div class="accordion-body">
+              <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1">
+                {% for row in c.defensive_actions %}
+                <li>{{ row }}</li>
+                {% else %}
+                <li>No actions listed.</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </details>
+        </div>
+      </article>
+      {% else %}
+      <div class="panel p-6 text-slate-500">No risks for selected filters. Generate risks to populate this section.</div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

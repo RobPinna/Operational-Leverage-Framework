@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-4" x-data="{ currentStep: {{ step }} }">
+  <div class="flex items-start justify-end gap-3 flex-wrap">
+    <form action="/assessments/demo/load" method="post" class="flex items-center gap-2">
+      <select class="select-dark" name="scenario">
+        <option>RiadGroup Hospitality</option>
+        <option>DesertAid NGO</option>
+      </select>
+      <button type="submit" class="btn-ghost">Load Demo Scenario</button>
+    </form>
+  </div>
+
+  <div class="panel p-4">
+    <div class="progress-wrap">
+      <div class="progress-bar" :style="`width:${(currentStep/7)*100}%`"></div>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <button class="step-pill" :class="currentStep===1 ? 'active' : ''" @click="currentStep=1" type="button">1 Define target</button>
+      <button class="step-pill" :class="currentStep===2 ? 'active' : ''" @click="currentStep=2" type="button">2 Select sources</button>
+      <button class="step-pill" :class="currentStep===3 ? 'active' : ''" @click="currentStep=3" type="button">3 Analyze signals</button>
+      <button class="step-pill" :class="currentStep===4 ? 'active' : ''" @click="currentStep=4" type="button">4 Build risk model</button>
+      <button class="step-pill" :class="currentStep===5 ? 'active' : ''" @click="currentStep=5" type="button">5 Review risks</button>
+      <button class="step-pill" :class="currentStep===6 ? 'active' : ''" @click="currentStep=6" type="button">6 Report</button>
+      <button class="step-pill" :class="currentStep===7 ? 'active' : ''" @click="currentStep=7" type="button">7 Complete</button>
+    </div>
+  </div>
+
+  <div class="grid xl:grid-cols-[1.5fr_1fr] gap-4">
+    <div class="space-y-4">
+      <section class="panel p-4" x-cloak x-show="currentStep===1"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Step 1 - Define target</h3>
+        <form method="post" action="/assessments/wizard/step1" class="mt-3 grid md:grid-cols-2 gap-3">
+          {% if assessment %}<input type="hidden" name="assessment_id" value="{{ assessment.id }}" />{% endif %}
+          <div>
+            <label class="text-sm text-slate-300">Company/Org Name</label>
+            <input class="input-dark mt-1" name="company_name" value="{{ assessment.company_name if assessment else '' }}" required />
+          </div>
+          <div>
+            <label class="text-sm text-slate-300">Domain</label>
+            <input class="input-dark mt-1" name="domain" value="{{ assessment.domain if assessment else '' }}" placeholder="example.org" required />
+          </div>
+          <div>
+            <label class="text-sm text-slate-300">Sector</label>
+            <input class="input-dark mt-1" name="sector" value="{{ assessment.sector if assessment else '' }}" />
+          </div>
+          <div>
+            <label class="text-sm text-slate-300">Regions</label>
+            <input class="input-dark mt-1" name="regions" value="{{ assessment.regions if assessment else '' }}" placeholder="MENA, EU" />
+          </div>
+          <label class="text-sm text-slate-300 flex items-center gap-2 md:col-span-2">
+            <input type="checkbox" name="demo_mode" {% if assessment and assessment.demo_mode %}checked{% endif %} />
+            Enable Demo Mode
+          </label>
+          <div class="md:col-span-2"><button class="btn-primary" type="submit">Save Target</button></div>
+        </form>
+      </section>
+
+      <section class="panel p-4" x-cloak x-show="currentStep===2"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Step 2 - Select sources</h3>
+        {% if not assessment %}
+          <p class="mt-2 text-sm text-slate-500">Create target first in Step 1.</p>
+        {% else %}
+          <form method="post" action="/assessments/wizard/step2" class="mt-3 space-y-3">
+            <input type="hidden" name="assessment_id" value="{{ assessment.id }}" />
+            {% for c in connector_states %}
+              <label class="block rounded-lg border border-slate-700 p-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <p class="text-sm text-white">{{ c.name }}</p>
+                    <p class="text-xs text-slate-400">{{ c.description }}</p>
+                    {% if c.requires_api_key %}<span class="badge mt-2 inline-block">API key optional/required</span>{% endif %}
+                  </div>
+                  <input type="checkbox" name="sources" value="{{ c.name }}" {% if c.name in selected_sources %}checked{% endif %} />
+                </div>
+              </label>
+            {% endfor %}
+            <button class="btn-primary" type="submit">Save Sources</button>
+          </form>
+        {% endif %}
+      </section>
+
+      <section class="panel p-4" x-cloak x-show="currentStep===3"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Step 3 - Analyze signals</h3>
+        {% if assessment %}
+        <form method="post" action="/assessments/wizard/step3" class="mt-3" data-loading="collect">
+          <input type="hidden" name="assessment_id" value="{{ assessment.id }}" />
+          <button class="btn-primary" type="submit">Run Collection</button>
+        </form>
+        <div class="mt-3 rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+          <p class="text-xs uppercase text-slate-400">Collection Logs</p>
+          <div hx-get="/assessments/{{ assessment.id }}/collect-log-fragment" hx-trigger="load, every 5s" hx-swap="innerHTML">
+            {% include "partials/collect_logs.html" %}
+          </div>
+        </div>
+        {% else %}
+          <p class="mt-2 text-sm text-slate-500">Create target first.</p>
+        {% endif %}
+      </section>
+
+      <section class="panel p-4" x-cloak x-show="currentStep===4"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Step 4 - Build risk model</h3>
+        {% if assessment %}
+        <form method="post" action="/assessments/wizard/step4" class="mt-3" data-loading="model">
+          <input type="hidden" name="assessment_id" value="{{ assessment.id }}" />
+          <button class="btn-primary" type="submit">Build findings model</button>
+        </form>
+        <p class="text-sm text-slate-400 mt-3">Builds prioritized findings grouped by Public Information Exposure, Mentions, External Contact Channels and Risk to Clients via Impersonation.</p>
+        {% endif %}
+      </section>
+
+      <section class="panel p-4" x-cloak x-show="currentStep===5"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Step 5 - Review risks</h3>
+        {% if assessment %}
+        <form method="post" action="/assessments/wizard/step5" class="mt-3" data-loading="assess">
+          <input type="hidden" name="assessment_id" value="{{ assessment.id }}" />
+          <button class="btn-primary" type="submit">Generate risks</button>
+        </form>
+        <p class="text-sm text-slate-400 mt-3">Signals -&gt; workflow lens -&gt; risks -&gt; defensive actions (evidence-first, defensive-only).</p>
+        {% endif %}
+      </section>
+
+      <section class="panel p-4" x-cloak x-show="currentStep===6"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Step 6 - Report</h3>
+        {% if assessment %}
+        <form method="post" action="/assessments/wizard/step6" class="mt-3" data-loading="report">
+          <input type="hidden" name="assessment_id" value="{{ assessment.id }}" />
+          <button class="btn-primary" type="submit">Generate PDF + JSON Export</button>
+        </form>
+        <p class="text-sm text-slate-400 mt-3">Use Reports section to download full history.</p>
+        {% endif %}
+      </section>
+
+      <section class="panel p-4" x-cloak x-show="currentStep===7"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-120"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 translate-y-2">
+        <h3 class="text-white font-semibold">Assessment complete</h3>
+        {% if assessment %}
+        <div class="mt-3 space-y-2">
+          {% set done_target = assessment.company_name and assessment.domain %}
+          {% set done_sources = selected_sources and (selected_sources | length) > 0 %}
+          {% set done_collect = stats.examined > 0 or stats.evidence > 0 %}
+          {% set done_model = stats.findings > 0 %}
+          {% set done_scenarios = stats.scenarios > 0 %}
+          {% set done_reduce = stats.mitigations > 0 %}
+          {% set done_report = stats.reports > 0 %}
+
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_target %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+              <span class="item-description">Target</span>
+            </div>
+            <span class="badge">{% if done_target %}Done{% else %}Pending{% endif %}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_sources %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+              <span class="item-description">Sources</span>
+            </div>
+            <span class="badge">{% if done_sources %}Done{% else %}Pending{% endif %}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_collect %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+              <span class="item-description">Collect</span>
+            </div>
+            <span class="badge">{% if done_collect %}Done{% else %}Pending{% endif %}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_model %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+              <span class="item-description">Model</span>
+            </div>
+            <span class="badge">{% if done_model %}Done{% else %}Pending{% endif %}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_scenarios %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+               <span class="item-description">Risks</span>
+            </div>
+            <span class="badge">{% if done_scenarios %}Done{% else %}Pending{% endif %}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_reduce %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+              <span class="item-description">Risk reduction actions</span>
+            </div>
+            <span class="badge">{% if done_reduce %}Done{% else %}Optional{% endif %}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="{% if done_report %}check-circle-2{% else %}circle{% endif %}" class="inline-icon"></i>
+              <span class="item-description">Report</span>
+            </div>
+            <span class="badge">{% if done_report %}Done{% else %}Pending{% endif %}</span>
+          </div>
+        </div>
+
+        <div class="mt-5 flex gap-2 flex-wrap">
+          <a class="btn-primary" href="/assessments/{{ assessment.id }}/overview">Go to assessment</a>
+           <a class="btn-ghost" href="/assessments/{{ assessment.id }}/risks">Open risks</a>
+        </div>
+        {% else %}
+        <p class="mt-2 text-sm text-slate-500">Create target first.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <aside class="space-y-4">
+      <div class="panel p-4">
+        <h3 class="text-sm font-semibold text-white">Assessment Snapshot</h3>
+        {% if assessment %}
+        <ul class="mt-2 space-y-1 text-sm text-slate-300">
+          <li>ID: #{{ assessment.id }}</li>
+          <li>Company: {{ assessment.company_name }}</li>
+          <li>Domain: {{ assessment.domain }}</li>
+          <li>Status: {{ assessment.status }}</li>
+          <li>Demo Mode: {{ 'Yes' if assessment.demo_mode else 'No' }}</li>
+        </ul>
+        {% else %}
+        <p class="mt-2 text-sm text-slate-500">No assessment selected.</p>
+        {% endif %}
+      </div>
+
+      <div class="panel p-4">
+        <h3 class="text-sm font-semibold text-white">Progress Metrics</h3>
+        <div class="grid grid-cols-2 gap-2 mt-3 text-sm">
+          <div class="rounded border border-slate-700 p-2"><p class="text-slate-400 text-xs">Evidence</p><p class="text-white text-lg">{{ stats.evidence }}</p></div>
+          <div class="rounded border border-slate-700 p-2"><p class="text-slate-400 text-xs">Examined</p><p class="text-white text-lg">{{ stats.examined }}</p></div>
+          <div class="rounded border border-slate-700 p-2"><p class="text-slate-400 text-xs">Findings</p><p class="text-white text-lg">{{ stats.findings }}</p></div>
+           <div class="rounded border border-slate-700 p-2"><p class="text-slate-400 text-xs">Risks</p><p class="text-white text-lg">{{ stats.scenarios }}</p></div>
+        </div>
+        {% if assessment %}
+         <a class="text-xs text-cyan-300 hover:text-cyan-200 underline mt-3 inline-block" href="/assessments/{{ assessment.id }}/evidence">
+           Open Evidence Log for this assessment
+         </a>
+        {% endif %}
+      </div>
+
+      <div class="panel p-4 text-sm text-slate-300">
+        <h3 class="font-semibold text-white">Safety Constraints</h3>
+        <ul class="mt-2 space-y-1 text-slate-400 text-xs">
+          <li>- Only descriptive risk narratives and indicators.</li>
+          <li>- No phishing-ready templates or credential prompts.</li>
+          <li>- Sanitized defensive messaging with placeholders.</li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+</div>
+{% endblock %}
+
+
+

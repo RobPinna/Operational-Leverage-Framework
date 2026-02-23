@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+
+{% block topbar_left %}
+{% set r = vm.risk %}
+{% set impact_class = 'high' if r.impact_band == 'HIGH' else ('med' if r.impact_band == 'MED' else 'low') %}
+<div class="flex items-center gap-2 flex-wrap">
+  <span class="badge-likelihood metric-label" data-tooltip="Estimated likelihood derived from distinct public signals (defensive-only).">
+    <span class="metric-key">Likelihood:</span>
+    <span class="metric-value {{ r.likelihood }}">{{ r.likelihood | upper }}</span>
+  </span>
+  <span class="badge-severity metric-label" data-tooltip="Impact is a conservative estimate of business impact if the risk materializes.">
+    <span class="metric-key">Impact:</span>
+    <span class="metric-value {{ impact_class }}">{{ r.impact_band }}</span>
+  </span>
+  <span class="badge-confidence metric-label" data-tooltip="{{ r.evidence_strength_tooltip }}">
+    <span class="metric-key">Evidence strength:</span>
+    <span class="metric-value {{ 'high' if r.evidence_strength in ['STRONG'] else ('med' if r.evidence_strength in ['OK'] else 'low') }}">{{ r.evidence_strength }}</span>
+  </span>
+  <span class="badge" data-tooltip="Signal coverage: number and diversity of distinct signals supporting this risk.">
+    Signal coverage: {{ r.signal_coverage }}
+  </span>
+  {% for chip in r.campaign_chips %}
+  <span class="badge" data-tooltip="Campaign pattern (heuristic).">{{ chip }}</span>
+  {% endfor %}
+  {% for chip in r.mitre_chips %}
+  <span class="badge" data-tooltip="MITRE mapping (heuristic, non-exhaustive).">{{ chip }}</span>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block topbar_right %}
+{% set __risk_set_key = 'risk:' ~ vm.risk.id %}
+{% set __risk_set = vm.evidenceSets.get(__risk_set_key, []) if vm.evidenceSets else [] %}
+{% set __risk_ev = namespace(url='') %}
+{% for ev in __risk_set %}
+  {% if not __risk_ev.url %}
+    {% if ev.doc_id %}
+      {% set __risk_ev.url = '/documents/' ~ ev.doc_id %}
+    {% elif ev.doc_link %}
+      {% set __risk_ev.url = ev.doc_link %}
+    {% elif ev.url %}
+      {% set __risk_ev.url = ev.url %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+<div class="flex items-center gap-2 flex-wrap justify-end">
+  <a class="btn-ghost text-xs" href="{{ __risk_ev.url if __risk_ev.url else ('/assessments/' ~ assessment.id ~ '/evidence') }}">View evidence</a>
+  <form method="post" action="/assessments/{{ assessment.id }}/export-pdf">
+    <button class="btn-ghost text-xs" type="submit">Export</button>
+  </form>
+  <button type="button" class="btn-ghost text-xs" onclick="window.__copyRiskSummary && window.__copyRiskSummary()">Copy summary</button>
+</div>
+{% endblock %}
+
+{% block content %}
+<script>
+  window.__riskDetailVM = {{ vm | tojson }};
+</script>
+
+<script>
+  function RiskDetailPage(vm) {
+    return {
+      vm: vm || {},
+      drawer: { open: false, title: '', subtitle: '', items: [] },
+      openEvidence: function(setId, title) {
+        const sets = (this.vm && this.vm.evidenceSets) ? this.vm.evidenceSets : {};
+        const items = (sets && sets[setId]) ? sets[setId] : [];
+        this.drawer.open = true;
+        this.drawer.title = String(title || 'Evidence');
+        this.drawer.subtitle = items.length ? (items.length + ' evidence item(s) (deduped)') : 'No evidence items available.';
+        this.drawer.items = items;
+      },
+      closeEvidence: function() {
+        this.drawer.open = false;
+        this.drawer.title = '';
+        this.drawer.subtitle = '';
+        this.drawer.items = [];
+      },
+    };
+  }
+</script>
+
+<div class="page-shell max-w-6xl" x-data="RiskDetailPage(window.__riskDetailVM)" x-cloak>
+  <section class="panel p-5">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2 flex-wrap">
+        <a class="tab-pill {% if tab == 'brief' %}active{% endif %}" href="/assessments/{{ assessment.id }}/risks/{{ vm.risk.id }}?tab=brief">Risk brief</a>
+        <a class="tab-pill {% if tab == 'workflow' %}active{% endif %}" href="/assessments/{{ assessment.id }}/risks/{{ vm.risk.id }}?tab=workflow">Workflow Lens</a>
+      </div>
+      <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">All risks</a>
+    </div>
+  </section>
+
+  <div class="mt-5 space-y-5">
+    {% if tab == 'brief' %}
+    <section class="panel p-6">
+      <h3 class="section-title">One-line verdict</h3>
+      <div class="mt-3 flex flex-wrap gap-2 items-center">
+        <span class="badge badge-primary-risk" data-tooltip="Primary risk type (deterministically assigned from signals/workflow cues).">
+          Primary risk type: {{ vm.risk.primary_risk_type if vm.risk.primary_risk_type else vm.risk.title }}
+        </span>
+      </div>
+      <p class="mt-3 text-lg sm:text-xl font-semibold text-white max-w-3xl">
+        {{ (vm.risk.risk_vector_summary or ('Top risk: ' ~ (vm.risk.primary_risk_type or vm.risk.title) ~ ' enabled by limited public signals.')) | replace('Top risk:', 'Risk:') }}
+      </p>
+      <p class="mt-2 text-sm text-slate-300 max-w-3xl clamp-3">
+        {{ vm.details.exec_brief if vm.details.exec_brief else "No executive brief available yet." }}
+      </p>
+    </section>
+
+    <section class="panel p-6">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 class="section-title">Risk recipe</h3>
+          <p class="section-subtitle">Signals that combine into a decision-ready risk outcome.</p>
+        </div>
+      </div>
+      <div class="mt-5 flex flex-wrap items-center gap-3">
+        {% for b in vm.recipe_bundles %}
+        <button type="button" class="recipe-block" @click="openEvidence({{ ('bundle:' ~ b.id) | tojson }}, {{ b.title | tojson }})">
+          <span class="recipe-icon"><i data-lucide="{{ b.icon }}"></i></span>
+          <span class="recipe-text">
+            <span class="recipe-title">{{ b.title }}</span>
+            <span class="recipe-meta">{{ b.item_count }} items</span>
+          </span>
+        </button>
+        {% if not loop.last %}
+        <span class="recipe-plus">+</span>
+        {% endif %}
+        {% endfor %}
+        <span class="recipe-arrow">-&gt;</span>
+        <div class="recipe-outcome">
+          <span class="recipe-title">{{ vm.risk.primary_risk_type if vm.risk.primary_risk_type else vm.risk.title }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel p-6">
+      <h3 class="section-title">Confirm / deny</h3>
+      <div class="mt-4 grid md:grid-cols-2 gap-4">
+        <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <p class="text-xs uppercase tracking-wide text-slate-400">What would confirm</p>
+          <ul class="mt-2 space-y-2 text-sm text-slate-200">
+            {% for x in vm.details.confirm_points %}
+            <li class="flex gap-2"><span class="text-emerald-300">-</span><span>{{ x }}</span></li>
+            {% else %}
+            <li class="text-slate-400">No confirm criteria available.</li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <p class="text-xs uppercase tracking-wide text-slate-400">What would deny</p>
+          <ul class="mt-2 space-y-2 text-sm text-slate-200">
+            {% for x in vm.details.deny_points %}
+            <li class="flex gap-2"><span class="text-sky-300">-</span><span>{{ x }}</span></li>
+            {% else %}
+            <li class="text-slate-400">No deny criteria available.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel p-6">
+      <h3 class="section-title">Control points</h3>
+      <div class="mt-4 space-y-3">
+        {% for cp in vm.details.control_points %}
+        <div class="flex items-start gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <div class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 text-slate-200">
+            <i data-lucide="check-circle-2" class="h-4 w-4"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm text-white">{{ cp.title }}</p>
+            <p class="text-xs text-slate-400 mt-1">Effort: {{ cp.effort }} - Expected reduction: {{ cp.expected_reduction }}</p>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-state">No control points available yet.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel p-6" id="evidence">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 class="section-title">Top evidence</h3>
+          <p class="section-subtitle">Evidence shown here passed relevance validation for this risk type.</p>
+        </div>
+        <button type="button" class="btn-ghost text-xs" @click="openEvidence({{ ('risk:' ~ vm.risk.id) | tojson }}, 'Risk evidence')">Open drawer</button>
+      </div>
+      <div class="mt-4 space-y-3">
+        {% for ev in vm.details.evidence %}
+        <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="min-w-0">
+              <p class="text-sm text-white clamp-2">{{ ev.snippet }}</p>
+              <p class="text-xs text-slate-400 mt-2">
+                <span class="badge">{{ ev.signal_type }}</span>
+                <span class="ml-2">Confidence: {{ ev.confidence }}%</span>
+              </p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              {% if ev.doc_id %}
+              <a class="btn-ghost text-xs" href="/documents/{{ ev.doc_id }}">Document</a>
+              {% endif %}
+              {% if ev.url %}
+              <a class="btn-ghost text-xs" href="{{ ev.url }}" target="_blank" rel="noreferrer">Source</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-state">Insufficient evidence.</div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if tab == 'workflow' %}
+    <section class="panel p-6">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 class="section-title">Workflow Lens</h3>
+          <p class="section-subtitle">Operational steps where trust is exercised and may enable this risk.</p>
+        </div>
+      </div>
+      <div class="mt-4 space-y-3">
+        {% for n in vm.details.linked_workflows %}
+        <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="min-w-0">
+              <p class="text-sm font-semibold text-white">{{ n.title }}</p>
+              <p class="text-xs text-slate-400 mt-1">
+                Sensitivity: {{ n.sensitivity_level }} - Channel: {{ n.channel_type }} - Trust friction: {{ n.trust_friction_score }}
+              </p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              {% set __wf_set = vm.evidenceSets.get(n.evidence_set_id, []) if vm.evidenceSets else [] %}
+              {% set __wf_ev = namespace(url='') %}
+              {% for ev in __wf_set %}
+                {% if not __wf_ev.url %}
+                  {% if ev.doc_id %}
+                    {% set __wf_ev.url = '/documents/' ~ ev.doc_id %}
+                  {% elif ev.doc_link %}
+                    {% set __wf_ev.url = ev.doc_link %}
+                  {% elif ev.url %}
+                    {% set __wf_ev.url = ev.url %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              <a class="btn-ghost text-xs" href="{{ __wf_ev.url if __wf_ev.url else ('/assessments/' ~ assessment.id ~ '/evidence') }}">View evidence</a>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-state">No linked workflow nodes found for this risk.</div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="modal-overlay" x-show="drawer.open" x-transition.opacity @click.self="closeEvidence()">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title" x-text="drawer.title"></h3>
+          <p class="modal-subtitle" x-text="drawer.subtitle"></p>
+        </div>
+        <button class="btn-ghost text-xs" @click="closeEvidence()">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="space-y-3">
+          <template x-for="it in drawer.items" :key="it.canonical_url + '|' + it.signal_type + '|' + (it.snippet || '')">
+            <div class="rounded-xl border border-slate-200/10 bg-white/5 p-4">
+              <div class="flex items-start justify-between gap-3 flex-wrap">
+                <div class="min-w-0">
+                  <p class="text-sm text-white clamp-2" x-text="it.snippet"></p>
+                  <div class="mt-2 flex gap-2 flex-wrap items-center text-xs text-slate-300">
+                    <span class="badge" x-text="it.signal_type || 'OTHER'"></span>
+                    <span x-text="(it.confidence || 0) + '%'"></span>
+                    <span class="text-slate-500" x-text="it.domain || ''"></span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <a class="btn-ghost text-xs" :href="'/documents/' + it.doc_id" x-show="it.doc_id">Document</a>
+                  <a class="btn-ghost text-xs" :href="it.url" target="_blank" rel="noreferrer" x-show="it.url">Source</a>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.__openRiskEvidence = function() {
+    try {
+      const rid = (window.__riskDetailVM && window.__riskDetailVM.risk) ? window.__riskDetailVM.risk.id : null;
+      const root = document.querySelector('[x-data]');
+      if (!rid || !root || !root.__x) return;
+      root.__x.$data.openEvidence('risk:' + String(rid), 'Risk evidence');
+    } catch (e) {}
+  };
+  window.__copyRiskSummary = async function() {
+    try {
+      const r = (window.__riskDetailVM && window.__riskDetailVM.risk) ? window.__riskDetailVM.risk : {};
+      const exec = (window.__riskDetailVM && window.__riskDetailVM.details) ? (window.__riskDetailVM.details.exec_brief || '') : '';
+      const lines = [];
+      if (r && r.title) lines.push('Risk: ' + r.title);
+      if (r && r.likelihood) lines.push('Likelihood: ' + String(r.likelihood).toUpperCase());
+      if (r && r.impact_band) lines.push('Impact: ' + String(r.impact_band));
+      if (r && r.evidence_strength) lines.push('Evidence strength: ' + String(r.evidence_strength));
+      if (exec) lines.push('', exec);
+      await navigator.clipboard.writeText(lines.join('\\n'));
+    } catch (e) {}
+  };
+</script>
+{% endblock %}

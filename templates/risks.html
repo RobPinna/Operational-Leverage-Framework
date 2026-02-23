@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block topbar_right %}
+<form method="get" action="/assessments/{{ assessment.id }}/risks" class="flex items-center gap-2 flex-wrap justify-end">
+  <input type="hidden" name="status" value="{{ status_tab }}" />
+  {% if view %}<input type="hidden" name="view" value="{{ view }}" />{% endif %}
+  <input class="input-dark w-56 text-xs" name="q" value="{{ q }}" placeholder="Search risks..." />
+  <select class="select-dark w-44 text-xs" name="risk_type" aria-label="Type">
+    <option value="">All types</option>
+    {% for t in risk_types %}
+    <option value="{{ t }}" {% if risk_type == t %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select class="select-dark w-28 text-xs" name="impact" aria-label="Impact">
+    <option value="">Impact</option>
+    <option value="HIGH" {% if impact|upper == 'HIGH' %}selected{% endif %}>HIGH</option>
+    <option value="MED" {% if impact|upper == 'MED' %}selected{% endif %}>MED</option>
+    <option value="LOW" {% if impact|upper == 'LOW' %}selected{% endif %}>LOW</option>
+  </select>
+  <button class="btn-ghost text-xs" type="submit">Apply</button>
+  <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks?status={{ status_tab }}">Reset</a>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="page-shell max-w-6xl">
+  <section class="panel p-3 mb-5">
+    <div class="flex items-center gap-2 flex-wrap">
+      <a class="tab-pill {% if status_tab == 'ELEVATED' %}active{% endif %}" href="/assessments/{{ assessment.id }}/risks?status=ELEVATED">
+        Elevated ({{ status_counts.get('ELEVATED', 0) }})
+      </a>
+      <a class="tab-pill {% if status_tab == 'WATCHLIST' %}active{% endif %}" href="/assessments/{{ assessment.id }}/risks?status=WATCHLIST">
+        Watchlist ({{ status_counts.get('WATCHLIST', 0) }})
+      </a>
+      <a class="tab-pill {% if status_tab == 'BASELINE' %}active{% endif %}" href="/assessments/{{ assessment.id }}/risks?status=BASELINE">
+        Baseline ({{ status_counts.get('BASELINE', 0) }})
+      </a>
+    </div>
+  </section>
+
+  {% if view == 'workflow' and high_friction %}
+  <section class="panel p-4 mb-5">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <h3 class="section-title">Workflow Lens</h3>
+        <p class="section-subtitle">High trust-friction nodes and the risks they reinforce.</p>
+      </div>
+    </div>
+    <div class="mt-4 grid md:grid-cols-2 gap-3">
+      {% for n in high_friction %}
+      <a class="info-card compact block" href="{{ n.linked_risk_url }}">
+        <p class="item-title">{{ n.title }}</p>
+        <p class="item-description clamp-2 mt-1">
+          Trust friction: {{ n.trust_friction_score }} - Linked risk: {{ n.linked_risk_title }}
+        </p>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="section-stack">
+    {% if not cards %}
+      {% if status_tab == 'WATCHLIST' %}
+      <div class="empty-state">No watchlist items in the current filter.</div>
+      {% elif status_tab == 'BASELINE' %}
+      <div class="empty-state">No baseline items in the current filter.</div>
+      {% else %}
+      <div class="empty-state">No elevated risks in the current filter.</div>
+      {% endif %}
+    {% else %}
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {% for c in cards %}
+        <article class="panel p-5">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h3 class="text-base sm:text-lg font-semibold text-white clamp-2">{{ c.title }}</h3>
+              {% if status_tab == 'WATCHLIST' %}
+              <p class="text-sm text-slate-300 clamp-2 mt-2">{{ c.watchlist_label }}</p>
+              {% else %}
+              <p class="text-sm text-slate-300 clamp-2 mt-2">
+                {{ (c.risk_vector_summary or c.why) | replace('Top risk:', 'Risk:') }}
+              </p>
+              {% endif %}
+            </div>
+            <a class="btn-primary text-xs" href="{{ c.url }}">Open</a>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2 items-center">
+            {% if status_tab == 'WATCHLIST' %}
+            <span class="badge">Needs review</span>
+            {% for m in c.missing_gate_reasons %}
+            <span class="badge">{{ m }}</span>
+            {% endfor %}
+            {% elif status_tab == 'BASELINE' %}
+            <span class="badge">Baseline</span>
+            {% endif %}
+            {% if c.primary_risk_type %}
+            <span class="badge badge-primary-risk" data-tooltip="Primary risk type (deterministically assigned).">Primary: {{ c.primary_risk_type }}</span>
+            {% endif %}
+            <span class="badge-likelihood metric-label">
+              <span class="metric-key">Likelihood:</span>
+              <span class="metric-value {{ c.likelihood }}">{{ c.likelihood | upper }}</span>
+            </span>
+            <span class="badge-severity metric-label">
+              <span class="metric-key">Impact:</span>
+              <span class="metric-value {{ 'high' if c.impact_band == 'HIGH' else ('med' if c.impact_band == 'MED' else 'low') }}">{{ c.impact_band }}</span>
+            </span>
+            <span class="badge-confidence metric-label">
+              <span class="metric-key">Evidence strength:</span>
+              <span class="metric-value {{ 'high' if c.evidence_strength_score >= 75 else ('med' if c.evidence_strength_score >= 50 else 'low') }}">{{ c.evidence_strength_score }}%</span>
+            </span>
+            <span class="badge" data-tooltip="Signal coverage: distinct signal types supporting this risk.">
+              Signal coverage: {{ c.signal_coverage }}
+            </span>
+            <span class="badge" data-tooltip="Evidence refs referenced by this risk.">Evidence refs: {{ c.evidence_count }}</span>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

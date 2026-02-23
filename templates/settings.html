@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-4">
+  <div>
+    <h2 class="text-2xl font-semibold text-white">Settings</h2>
+    <p class="text-sm text-slate-400">Connector keys, LLM settings, enable flags, and demo controls.</p>
+    {% if test_result %}
+    <div class="mt-3 rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm text-cyan-100">{{ test_result }}</div>
+    {% endif %}
+  </div>
+
+  <div class="panel p-4 text-sm text-slate-300">
+    <p class="font-semibold text-white">Secrets storage note</p>
+    <p class="text-slate-400 mt-1">Stored keys are obfuscated with a reversible local XOR+pepper method (not hardware-grade encryption). Suitable for local/demo use only.</p>
+  </div>
+
+  <div class="panel p-4">
+    <div class="flex items-start justify-between gap-3 flex-wrap">
+      <div>
+        <p class="text-white font-medium">LLM Reasoner</p>
+        <p class="text-xs text-slate-400">Configure GPT key and model used by risk scenario generation.</p>
+        <div class="mt-2 text-xs text-slate-500">
+          <span class="badge">Model: {{ llm_state.model }}</span>
+          <span class="badge">Key set: {{ 'Yes' if llm_state.has_api_key else 'No' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <form method="post" action="/settings/llm/save" class="mt-3 grid md:grid-cols-[220px_1fr_auto] gap-2 items-center">
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-400">Model</label>
+        <select class="select-dark mt-1" name="llm_model">
+          <option value="gpt-4.1" {% if llm_state.model == 'gpt-4.1' %}selected{% endif %}>GPT-4.1</option>
+          <option value="gpt-4.1o" {% if llm_state.model == 'gpt-4.1o' %}selected{% endif %}>GPT-4.1o</option>
+          <option value="LOCAL" {% if llm_state.model == 'LOCAL' %}selected{% endif %}>LOCAL (placeholder)</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-400">OpenAI API Key (optional for LOCAL)</label>
+        <input class="input-dark mt-1" name="llm_api_key" type="password" placeholder="sk-..." />
+        <label class="mt-2 text-xs text-slate-400 flex items-center gap-2">
+          <input type="checkbox" name="clear_llm_api_key" />
+          Clear stored key
+        </label>
+      </div>
+      <button type="submit" class="btn-primary">Save LLM</button>
+    </form>
+  </div>
+
+  <div class="panel p-4">
+    <div class="flex items-start justify-between gap-3 flex-wrap">
+      <div>
+        <p class="text-white font-medium">Advanced (RAG Retrieval)</p>
+        <p class="text-xs text-slate-400">Controls retrieval used to build evidence packets for risk scenario generation.</p>
+        <div class="mt-2 text-xs text-slate-500">
+          <span class="badge">K: {{ rag_state.top_k }}</span>
+          <span class="badge">Min score: {{ rag_state.min_ratio }} × top1</span>
+        </div>
+      </div>
+    </div>
+
+    <form method="post" action="/settings/rag/save" class="mt-3 grid md:grid-cols-[220px_220px_auto] gap-2 items-end">
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-400">Top K</label>
+        <input class="input-dark mt-1" name="rag_top_k" type="number" min="1" max="12" value="{{ rag_state.top_k }}" />
+      </div>
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-400">Min score ratio</label>
+        <input class="input-dark mt-1" name="rag_min_ratio" type="number" min="0.10" max="0.95" step="0.05" value="{{ rag_state.min_ratio }}" />
+        <p class="text-xs text-slate-500 mt-2">Threshold is relative: keep passages scoring ≥ (ratio × top1 score).</p>
+      </div>
+      <button type="submit" class="btn-primary">Save Advanced</button>
+    </form>
+  </div>
+
+  <div class="space-y-3">
+    {% for c in connectors %}
+    <div class="panel p-4">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p class="text-white font-medium">{{ c.name }}</p>
+          <p class="text-xs text-slate-400">{{ c.description }}</p>
+          <div class="mt-2 text-xs text-slate-500">
+            {% if c.requires_api_key %}
+              <span class="badge">Requires API key</span>
+              <span class="badge">Key set: {{ 'Yes' if c.has_api_key else 'No' }}</span>
+            {% else %}
+              <span class="badge">No API key required</span>
+            {% endif %}
+            <span class="badge">Enabled: {{ 'Yes' if c.enabled else 'No' }}</span>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <form method="post" action="/settings/connector/test">
+            <input type="hidden" name="connector_name" value="{{ c.name }}" />
+            <button type="submit" class="btn-ghost">Test Connector</button>
+          </form>
+        </div>
+      </div>
+
+      <form method="post" action="/settings/connector/save" class="mt-3 grid gap-2 items-center {% if c.requires_api_key %}md:grid-cols-[auto_1fr_auto]{% else %}md:grid-cols-[auto_auto]{% endif %}">
+        <input type="hidden" name="connector_name" value="{{ c.name }}" />
+        <label class="text-sm text-slate-300 flex items-center gap-2">
+          <input type="checkbox" name="enabled" {% if c.enabled %}checked{% endif %} /> Enabled
+        </label>
+        {% if c.requires_api_key %}
+        <input class="input-dark" name="api_key" type="password" placeholder="API key" />
+        {% endif %}
+        <button type="submit" class="btn-primary">Save</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

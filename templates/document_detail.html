@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell">
+  {% if assessment_context %}
+  {% include "partials/assessment_breadcrumb.html" %}
+  {% endif %}
+
+  <section class="section-stack panel p-4">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <h2 class="section-title">Document Detail</h2>
+      {% if assessment %}
+      <a class="btn-ghost" href="/assessments/{{ assessment.id }}/risks">Back to Risks</a>
+      {% endif %}
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-3 text-sm mt-3">
+      <div>
+        <p class="text-slate-400 text-xs uppercase">ID</p>
+        <p class="text-white">#{{ document.id }}</p>
+      </div>
+      <div>
+        <p class="text-slate-400 text-xs uppercase">Type</p>
+        <p class="text-white">{{ document.doc_type }}</p>
+      </div>
+      <div>
+        <p class="text-slate-400 text-xs uppercase">Title</p>
+        <p class="text-white">{{ document.title if document.title else '-' }}</p>
+      </div>
+      <div>
+        <p class="text-slate-400 text-xs uppercase">Language</p>
+        <p class="text-white">{{ document.language }}</p>
+      </div>
+      <div>
+        <p class="text-slate-400 text-xs uppercase">Created</p>
+        <p class="text-white">{{ document.created_at.strftime('%Y-%m-%d %H:%M:%S') if document.created_at else '-' }}</p>
+      </div>
+      <div>
+        <p class="text-slate-400 text-xs uppercase">Content Hash</p>
+        <p class="text-white font-mono text-xs break-all">{{ document.content_hash if document.content_hash else '-' }}</p>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <p class="text-slate-400 text-xs uppercase">Source URL</p>
+      <a class="link-inline break-all text-sm" href="{{ document.url }}" target="_blank" rel="noopener">{{ document.url }}</a>
+    </div>
+
+    <div class="mt-3">
+      <p class="text-slate-400 text-xs uppercase">Extracted Text</p>
+      <div class="mt-1 rounded border border-slate-700 bg-slate-900/60 p-3 max-h-[560px] overflow-y-auto">
+        <pre class="text-xs text-slate-300 whitespace-pre-wrap">{{ document.extracted_text if document.extracted_text else 'No extracted text' }}</pre>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

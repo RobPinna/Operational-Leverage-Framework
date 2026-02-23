@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title if title else 'Operational Leverage Framework' }}</title>
+    <script>
+      tailwind = window.tailwind || {};
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'Segoe UI', 'sans-serif']
+            }
+          }
+        }
+      };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ static_v('css/styles.css') }}" />
+    <script defer src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.14.0/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script defer src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script defer src="/static/js/app.js?v={{ static_v('js/app.js') }}"></script>
+  </head>
+  <body class="app-body">
+    {% if request.session.get('user_id') %}
+    <div class="app-shell-wrap">
+      <div class="app-shell">
+        <aside class="app-sidebar">
+          <div>
+            <div class="brand-row mb-5">
+              <a class="brand-mark" href="/assessments" aria-label="All assessments">
+                <i data-lucide="radio"></i>
+              </a>
+              <div>
+                {% if assessment_context %}
+                <h1 class="brand-title">{{ assessment_context.company_name }}</h1>
+                <p class="brand-subtitle">Operational Leverage Framework</p>
+                {% else %}
+                <h1 class="brand-title">Operational Leverage Framework</h1>
+                <p class="brand-subtitle">Risk Intelligence Workspace</p>
+                {% endif %}
+              </div>
+            </div>
+
+            {% if assessment_context %}
+            <div class="sidebar-divider"></div>
+            <nav class="sidebar-nav text-sm">
+              <a class="nav-link {% if active == 'assessment_overview' %}active{% endif %}" href="/assessments/{{ assessment_context.id }}/overview">
+                <i data-lucide="panel-top" class="nav-icon"></i>
+                <span>Overview</span>
+              </a>
+              <a class="nav-link {% if active == 'assessment_risks' %}active{% endif %}" href="/assessments/{{ assessment_context.id }}/risks">
+                <i data-lucide="shield-alert" class="nav-icon"></i>
+                <span>Risks</span>
+              </a>
+              <a class="nav-link {% if active == 'assessment_evidence' %}active{% endif %}" href="/assessments/{{ assessment_context.id }}/evidence">
+                <i data-lucide="list-checks" class="nav-icon"></i>
+                <span>Evidence Log</span>
+              </a>
+              <a class="nav-link {% if active == 'assessment_report' %}active{% endif %}" href="/assessments/{{ assessment_context.id }}/report">
+                <i data-lucide="file-text" class="nav-icon"></i>
+                <span>Report</span>
+              </a>
+              <a class="nav-link {% if active == 'settings' %}active{% endif %}" href="/settings">
+                <i data-lucide="settings" class="nav-icon"></i>
+                <span>Settings</span>
+              </a>
+            </nav>
+            {% else %}
+            <nav class="sidebar-nav text-sm">
+              <a class="nav-link {% if active == 'assessments' %}active{% endif %}" href="/assessments">
+                <i data-lucide="folders" class="nav-icon"></i>
+                <span>Assessments</span>
+              </a>
+              <a class="nav-link {% if active == 'settings' %}active{% endif %}" href="/settings">
+                <i data-lucide="settings" class="nav-icon"></i>
+                <span>Settings</span>
+              </a>
+            </nav>
+            {% endif %}
+          </div>
+
+          <div class="sidebar-user">
+            <div class="avatar">{{ (request.session.get('username') or 'U')[:1] | upper }}</div>
+            <div>
+              <p class="user-name">{{ request.session.get('username') }}</p>
+              <a href="/logout" class="user-link">Logout</a>
+            </div>
+          </div>
+        </aside>
+
+        <section class="workspace">
+          <header class="workspace-topbar">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h2 class="workspace-page-title">{{ section_title if section_title else (title if title else 'Operational Leverage Framework') }}</h2>
+              {% block topbar_left %}{% endblock %}
+            </div>
+            <div class="workspace-topbar-actions">
+              {% block topbar_right %}{% endblock %}
+            </div>
+          </header>
+          <div class="workspace-main">
+            {% block content %}{% endblock %}
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="loadingOverlay" class="loading-overlay hidden" aria-hidden="true">
+      <div class="loading-modal">
+        <div class="loading-spinner" aria-label="Loading"></div>
+        <div class="mt-4 text-center">
+          <p class="loading-title">Working...</p>
+          <p id="loadingStatus" class="loading-status">Preparing...</p>
+        </div>
+      </div>
+    </div>
+    {% else %}
+      {% block auth_content %}{% endblock %}
+    {% endif %}
+  </body>
+</html>

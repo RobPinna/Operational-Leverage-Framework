@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block topbar_right %}
+<form method="get" action="/assessments/{{ assessment.id }}/evidence" class="flex items-center gap-2 flex-wrap justify-end">
+  <input class="input-dark w-60 text-xs" name="q" value="{{ vm.q }}" placeholder="Search URL/snippet..." />
+  <select class="select-dark w-44 text-xs" name="signal" aria-label="Signal type">
+    <option value="">All signals</option>
+    {% for s in vm.signal_values %}
+    <option value="{{ s }}" {% if vm.signal_type|upper == s %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn-ghost text-xs" type="submit">Apply</button>
+  <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/evidence">Reset</a>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="page-shell max-w-6xl">
+  <section class="panel p-4">
+    {% if not vm.rows %}
+      <div class="empty-state">No evidence items available yet.</div>
+    {% else %}
+    <div class="overflow-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400 text-xs uppercase">
+            <th class="py-2 pr-4">Source</th>
+            <th class="py-2 pr-4">Signal type</th>
+            <th class="py-2 pr-4">Linked risks</th>
+            <th class="py-2 pr-4">Workflow nodes</th>
+            <th class="py-2 pr-4">Weight</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800">
+          {% for r in vm.rows %}
+          <tr>
+            <td class="py-3 pr-4 align-top">
+              <div class="space-y-1">
+                {% if r.open_risk_url %}
+                <a class="text-sky-300 hover:text-sky-200 underline" href="{{ r.open_risk_url }}" title="Open linked risk">
+                  {{ r.canonical_url }}
+                </a>
+                {% else %}
+                <span class="text-slate-200">{{ r.canonical_url }}</span>
+                {% endif %}
+                <div class="text-xs text-slate-400 clamp-2">{{ r.snippet }}</div>
+                <div class="flex gap-2 flex-wrap items-center text-xs text-slate-400">
+                  {% if r.url %}
+                  <a class="badge" href="{{ r.url }}" target="_blank" rel="noreferrer">Open source</a>
+                  {% endif %}
+                  {% if r.doc_id %}
+                  <a class="badge" href="/documents/{{ r.doc_id }}">Document</a>
+                  {% endif %}
+                  <span class="badge">Confidence: {{ r.confidence }}%</span>
+                  {% if r.occurrences and r.occurrences > 1 %}
+                  <span class="badge">×{{ r.occurrences }}</span>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+            <td class="py-3 pr-4 align-top">
+              <span class="badge">{{ r.signal_type }}</span>
+            </td>
+            <td class="py-3 pr-4 align-top">
+              <div class="flex flex-wrap gap-2">
+                {% for rr in r.linked_risks %}
+                <a class="badge" href="/assessments/{{ assessment.id }}/risks/{{ rr.id }}">{{ rr.title }}</a>
+                {% else %}
+                <span class="text-xs text-slate-500">—</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="py-3 pr-4 align-top">
+              <div class="flex flex-wrap gap-2">
+                {% for ww in r.linked_workflows %}
+                {% if r.open_risk_workflow_url %}
+                <a class="badge" href="{{ r.open_risk_workflow_url }}">{{ ww.title }}</a>
+                {% else %}
+                <span class="badge">{{ ww.title }}</span>
+                {% endif %}
+                {% else %}
+                <span class="text-xs text-slate-500">—</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="py-3 pr-4 align-top">
+              <span class="badge" data-tooltip="Evidence weight: boilerplate/meta evidence is down-weighted.">{{ '%.2f'|format(r.weight) }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

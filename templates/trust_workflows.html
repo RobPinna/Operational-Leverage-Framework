@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% block topbar_right %}
+<form method="post" action="/assessments/{{ assessment.id }}/trust-workflows/generate" data-loading="assess">
+  <button class="btn-primary text-xs" type="submit">Refresh map</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="page-shell">
+  <section class="section-stack">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="panel p-4">
+        <p class="kpi-label">Operational Trust Dependencies Identified</p>
+        <p class="kpi-value">{{ summary.total_nodes }}</p>
+        <p class="kpi-helper">Distinct workflow nodes detected from indexed corpus passages.</p>
+      </div>
+      <div class="panel p-4">
+        <p class="kpi-label">High Trust Friction Nodes</p>
+        <p class="kpi-value">{{ summary.high_friction_nodes }}</p>
+        <p class="kpi-helper">Nodes with trust friction score above 70.</p>
+      </div>
+      <div class="panel p-4">
+        <p class="kpi-label">Sensitive External Exchanges</p>
+        <p class="kpi-value">{{ summary.external_sensitive_nodes }}</p>
+        <p class="kpi-helper">High-sensitivity workflows likely handled over external channels.</p>
+      </div>
+    </div>
+
+    <div class="panel p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-100">Trust Workflow Map</h2>
+          <p class="text-sm text-slate-500 max-w-prose mt-1">
+            Process-based view of trust dependencies. Expand nodes to see supporting signals and confirm/deny guidance.
+          </p>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="space-y-3">
+        {% for c in cards %}
+        <article class="info-card">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <p class="text-xs text-slate-400">{{ c.kind }}</p>
+              <h3 class="text-base font-semibold text-slate-100 mt-1">{{ c.title }}</h3>
+              <div class="mt-3 flex gap-2 flex-wrap items-center">
+                <span class="badge" data-tooltip="Sensitivity of the workflow based on detected tokens and context.">
+                  Sensitivity: {{ c.sensitivity }}
+                </span>
+                <span class="badge" data-tooltip="Primary channel type inferred from the strongest supporting evidence.">
+                  Channel: {{ c.channel }}
+                </span>
+                <span class="badge-confidence {{ c.score_band }}" data-tooltip="Trust friction score: higher means higher dependency on trust in external channels and weaker public verification guidance.">
+                  Trust friction: {{ c.score }}
+                </span>
+                {% if c.requires_trust %}
+                <span class="badge" data-tooltip="This workflow likely requires recipients to trust externally reachable channels.">
+                  Requires trust
+                </span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 space-y-3">
+            <details class="accordion-item">
+              <summary><i data-lucide="link" class="inline-icon"></i> Supporting signals ({{ c.evidence | length }})</summary>
+              <div class="accordion-body">
+                <div class="space-y-2">
+                  {% for ev in c.evidence %}
+                  <div class="info-card compact">
+                    <p class="item-description">{{ ev.snippet }}</p>
+                    <a class="link-inline mt-2 inline-block break-all" href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title if ev.title else ev.url }}</a>
+                  </div>
+                  {% else %}
+                  <p class="text-sm text-slate-500">No supporting signals.</p>
+                  {% endfor %}
+                </div>
+              </div>
+            </details>
+
+            <details class="accordion-item">
+              <summary><i data-lucide="check-circle" class="inline-icon"></i> What would confirm / deny</summary>
+              <div class="accordion-body">
+                <div class="grid md:grid-cols-2 gap-4">
+                  <div class="info-card compact">
+                    <p class="kpi-label flex items-center gap-2">
+                      <i data-lucide="check" class="inline-icon"></i>
+                      What would confirm
+                    </p>
+                    <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1 mt-2">
+                      {% for row in c.confirm %}
+                      <li>{{ row }}</li>
+                      {% else %}
+                      <li class="text-slate-500">No confirm checks suggested.</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                  <div class="info-card compact">
+                    <p class="kpi-label flex items-center gap-2">
+                      <i data-lucide="x" class="inline-icon"></i>
+                      What would deny
+                    </p>
+                    <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1 mt-2">
+                      {% for row in c.deny %}
+                      <li>{{ row }}</li>
+                      {% else %}
+                      <li class="text-slate-500">No deny checks suggested.</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </article>
+        {% else %}
+        <div class="panel p-6 text-slate-500">
+          No workflow nodes detected yet. Run collection, then click “Refresh map”.
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="panel p-5 mt-4">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-100">Social Trust Nodes</h2>
+          <p class="text-sm text-slate-500 max-w-prose mt-1">
+            Official social channels discovered from target pages. Limited public metadata only (no login, no deep scraping).
+          </p>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="space-y-3">
+        {% for s in social_cards %}
+        <details class="accordion-item">
+          <summary>
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-3 w-full pr-6 items-center">
+              <div class="col-span-2">
+                <p class="text-xs text-slate-400">{{ s.platform | upper }}</p>
+                <p class="text-sm text-slate-100 font-semibold mt-1">
+                  {% if s.handle %}@{{ s.handle }}{% else %}Profile{% endif %}
+                </p>
+              </div>
+              <div class="flex flex-col gap-1">
+                <span class="badge">Verified: {{ 'yes' if s.verified else 'no' if s.verified is not none else '-' }}</span>
+                <span class="badge">Contact: {{ 'yes' if s.contact_in_bio else 'no' }}</span>
+              </div>
+              <div class="flex flex-col gap-1">
+                <span class="badge">DM workflow: {{ 'yes' if s.dm_workflow else 'no' }}</span>
+                <span class="badge">Booking link: {{ 'yes' if s.booking_link else 'no' }}</span>
+              </div>
+              <div class="md:col-span-2 flex items-center justify-end">
+                <span class="badge-confidence {{ 'high' if s.score >= 80 else ('med' if s.score >= 60 else 'low') }}">
+                  Trust friction: {{ s.score }}
+                </span>
+              </div>
+            </div>
+          </summary>
+          <div class="accordion-body">
+            <div class="space-y-3">
+              <div class="info-card compact">
+                <p class="kpi-label flex items-center gap-2">
+                  <i data-lucide="link" class="inline-icon"></i>
+                  Profile
+                </p>
+                <a class="link-inline mt-2 inline-block break-all" href="{{ s.profile_url }}" target="_blank" rel="noopener">{{ s.profile_url }}</a>
+              </div>
+
+              {% if s.bio %}
+              <div class="info-card compact">
+                <p class="kpi-label flex items-center gap-2">
+                  <i data-lucide="file-text" class="inline-icon"></i>
+                  Bio snippet
+                </p>
+                <p class="item-description mt-2 max-w-prose">{{ s.bio }}</p>
+              </div>
+              {% endif %}
+
+              {% if s.booking_link %}
+              <div class="info-card compact">
+                <p class="kpi-label flex items-center gap-2">
+                  <i data-lucide="corner-right-down" class="inline-icon"></i>
+                  Link in bio
+                </p>
+                <a class="link-inline mt-2 inline-block break-all" href="{{ s.booking_link }}" target="_blank" rel="noopener">{{ s.booking_link }}</a>
+              </div>
+              {% endif %}
+
+              <div class="info-card compact">
+                <p class="kpi-label flex items-center gap-2">
+                  <i data-lucide="badge-check" class="inline-icon"></i>
+                  Signals detected
+                </p>
+                <div class="mt-2 flex gap-2 flex-wrap">
+                  {% for sig in s.signals %}
+                  <span class="badge">{{ sig }}</span>
+                  {% else %}
+                  <span class="badge">None</span>
+                  {% endfor %}
+                </div>
+              </div>
+
+              {% if s.linked_nodes and s.linked_nodes | length > 0 %}
+              <div class="info-card compact">
+                <p class="kpi-label flex items-center gap-2">
+                  <i data-lucide="git-branch-plus" class="inline-icon"></i>
+                  Linked workflow nodes
+                </p>
+                <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1 mt-2">
+                  {% for n in s.linked_nodes %}
+                  <li>{{ n.title }} (score {{ n.score }})</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              {% endif %}
+
+              {% if s.related_scenarios and s.related_scenarios | length > 0 %}
+              <div class="info-card compact">
+                <p class="kpi-label flex items-center gap-2">
+                  <i data-lucide="brain-circuit" class="inline-icon"></i>
+                  Related risks
+                </p>
+                <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1 mt-2">
+                  {% for r in s.related_scenarios %}
+                  <li>
+                    <a class="link-inline" href="/assessments/{{ assessment.id }}/hypotheses#risk-scenario-{{ r.id }}">Scenario #{{ r.id }}</a>
+                    <span class="text-slate-500">({{ r.title }})</span>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </details>
+        {% else %}
+        <div class="panel p-6 text-slate-500">
+          No social trust nodes discovered yet. Ensure the site links to official profiles and re-run collection.
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

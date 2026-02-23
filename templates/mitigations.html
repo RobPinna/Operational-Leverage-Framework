@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell">
+  {% include "partials/assessment_breadcrumb.html" %}
+
+  <section class="section-stack grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    {% for item in cards %}
+    <article class="panel p-4">
+      <header class="flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <h2 class="item-title">Risk Reduction Action #{{ item.id }}</h2>
+          <p class="item-meta mt-1">Owner: {{ item.owner }} | Effort {{ item.effort }}</p>
+        </div>
+        <span class="badge-severity {{ item.priority_label }}">P{{ item.priority }}</span>
+      </header>
+
+      <p class="item-description mt-3">{{ item.description }}</p>
+
+      <details class="accordion-item mt-3">
+        <summary>Linked Findings ({{ item.linked | length }})</summary>
+        <div class="accordion-body">
+          <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1">
+            {% for linked in item.linked %}
+            <li>{{ linked }}</li>
+            {% else %}
+            <li>No linked finding references.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </details>
+    </article>
+    {% else %}
+    <div class="panel p-6 text-slate-500 xl:col-span-3">No risk reduction actions generated yet.</div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

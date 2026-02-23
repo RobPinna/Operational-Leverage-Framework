@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-start justify-between gap-3 flex-wrap">
+    <div>
+      <h2 class="text-2xl font-semibold text-white">Dashboard</h2>
+      <p class="text-sm text-slate-400">Threat visibility, public information exposure posture, and client impersonation-risk signals.</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="/assessments/new" class="btn-primary">New Assessment</a>
+      <a href="/assessments" class="btn-ghost">View Assessments</a>
+    </div>
+  </div>
+
+  <div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">
+    <div class="kpi-card p-4">
+      <p class="text-xs text-slate-400">Assessments</p>
+      <p class="text-2xl text-white font-semibold">{{ kpis.assessments }}</p>
+    </div>
+    <div class="kpi-card p-4">
+      <p class="text-xs text-slate-400">Evidence</p>
+      <p class="text-2xl text-white font-semibold">{{ kpis.evidence }}</p>
+    </div>
+    <div class="kpi-card p-4">
+      <p class="text-xs text-slate-400">Findings</p>
+      <p class="text-2xl text-white font-semibold">{{ kpis.findings }}</p>
+    </div>
+    <div class="kpi-card p-4">
+      <p class="text-xs text-slate-400">Risk Reduction Actions</p>
+      <p class="text-2xl text-white font-semibold">{{ kpis.mitigations }}</p>
+    </div>
+  </div>
+
+  <div class="grid xl:grid-cols-2 gap-4">
+    <div class="panel p-4">
+      <p class="text-sm text-slate-300 mb-2">Findings by Type</p>
+      <canvas id="typeChart" height="190"></canvas>
+    </div>
+    <div class="panel p-4">
+      <p class="text-sm text-slate-300 mb-2">Severity Distribution</p>
+      <canvas id="sevChart" height="190"></canvas>
+    </div>
+  </div>
+
+  <div class="grid xl:grid-cols-[1.4fr_1fr] gap-4">
+    <div class="panel p-4">
+      <p class="text-sm text-slate-300 mb-2">Geo Context Map (OSM)</p>
+      <div id="riskMap" class="h-72 rounded-lg border border-slate-700"></div>
+    </div>
+    <div class="panel p-4">
+      <div class="flex items-center justify-between">
+        <p class="text-sm text-slate-300">Top Findings</p>
+        {% if latest %}
+        <span class="text-xs text-cyan-300">Latest: #{{ latest.id }} {{ latest.company_name }}</span>
+        {% endif %}
+      </div>
+      <div class="mt-3 space-y-2">
+        {% for item in top_findings %}
+        <div class="rounded-lg border border-slate-700/90 bg-slate-900/70 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-sm text-white">{{ item.title }}</p>
+            <span class="badge">S{{ item.severity }}</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">
+            {% if item.type == 'touchpoint' %}EXTERNAL CONTACT CHANNELS{% elif item.type == 'pivot' %}RISK TO CLIENTS VIA IMPERSONATION{% elif item.type == 'exposure' %}PUBLIC INFORMATION EXPOSURE{% elif item.type == 'mention' %}MENTIONS{% else %}{{ item.type|upper }}{% endif %}
+            | confidence {{ item.confidence }}%
+          </p>
+          {% set preview = finding_previews.get(item.id, {}) %}
+          <div class="mt-2 flex items-center gap-2 flex-wrap">
+            {% if preview.primary_url %}
+            <a class="text-xs text-cyan-300 hover:text-cyan-200 underline" href="{{ preview.primary_url }}" target="_blank" rel="noopener">
+              Source Link
+            </a>
+            {% endif %}
+            <button class="btn-ghost text-xs citation-btn" type="button" data-finding-id="{{ item.id }}">
+              Citations{% if preview.ref_count %} ({{ preview.ref_count }}){% endif %}
+            </button>
+          </div>
+        </div>
+        {% else %}
+        <p class="text-sm text-slate-500">No findings yet. Run an assessment wizard.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="citationModal" class="fixed inset-0 bg-slate-950/70 hidden items-center justify-center z-50 p-4">
+  <div class="modal-frame">
+    <div class="modal-header">
+      <div>
+        <p id="citationTitle" class="modal-title">Citations</p>
+        <p class="modal-subtitle">Evidence quoted for this finding with verified source links when available.</p>
+      </div>
+      <button id="citationClose" class="btn-ghost text-xs" type="button">Close</button>
+    </div>
+    <div id="citationBody" class="modal-scroll space-y-3"></div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const typeCtx = document.getElementById('typeChart');
+  const sevCtx = document.getElementById('sevChart');
+  const typeCounts = {{ chart_counts | tojson }};
+  const severityCounts = {{ severity_counts | tojson }};
+
+  const typeLabelMap = {
+    exposure: 'Public Information Exposure',
+    mention: 'Mentions',
+    touchpoint: 'External Contact Channels',
+    pivot: 'Risk to Clients via Impersonation'
+  };
+
+  if (typeCtx) {
+    new Chart(typeCtx, {
+      type: 'bar',
+      data: {
+        labels: Object.keys(typeCounts).map(k => typeLabelMap[k] || k),
+        datasets: [{
+          label: 'Findings',
+          data: Object.values(typeCounts),
+          backgroundColor: ['#67c97e', '#63b5ff', '#f2bd5c', '#f18686']
+        }]
+      },
+      options: { plugins: { legend: { display: false } }, scales: { y: { ticks: { color: '#64748b' }, grid: { color: '#e6edf6' } }, x: { ticks: { color: '#64748b' }, grid: { color: '#eef3fa' } } } }
+    });
+  }
+
+  if (sevCtx) {
+    new Chart(sevCtx, {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(severityCounts).map(v => `S${v}`),
+        datasets: [{
+          data: Object.values(severityCounts),
+          backgroundColor: ['#34c759', '#66d684', '#f3be60', '#f39a64', '#ef7c7c']
+        }]
+      },
+      options: { plugins: { legend: { labels: { color: '#64748b' } } } }
+    });
+  }
+
+  const points = {{ map_points | tojson }};
+  const mapEl = document.getElementById('riskMap');
+  if (mapEl) {
+    const map = L.map('riskMap').setView([24.7, 46.6], 3);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 12 }).addTo(map);
+    points.forEach(p => {
+      L.circleMarker([p.lat, p.lon], { radius: 6, color: '#22d3ee' }).addTo(map).bindPopup(p.label);
+    });
+  }
+
+  const modal = document.getElementById('citationModal');
+  const closeBtn = document.getElementById('citationClose');
+  const body = document.getElementById('citationBody');
+  const title = document.getElementById('citationTitle');
+  const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+  const safeUrl = (url) => {
+    try {
+      const u = new URL(String(url || ''));
+      const host = u.hostname.toLowerCase();
+      const blocked = new Set(['localhost', 'example.com', 'example.org', 'example.net', 'demo.invalid']);
+      if (!['http:', 'https:'].includes(u.protocol)) return '';
+      if (blocked.has(host) || host.endsWith('.example') || host.endsWith('.local') || host.endsWith('.invalid')) return '';
+      return u.toString();
+    } catch {
+      return '';
+    }
+  };
+  function closeModal() {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+  }
+  closeBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  document.querySelectorAll('.citation-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const findingId = btn.dataset.findingId;
+      body.innerHTML = '<p class="text-sm text-slate-400">Loading citations...</p>';
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+
+      try {
+        const res = await fetch(`/api/findings/${findingId}/citations`);
+        if (!res.ok) throw new Error('Load failed');
+        const data = await res.json();
+        title.textContent = `Citations - ${data.finding.title}`;
+
+        if (!data.citations || data.citations.length === 0) {
+          body.innerHTML = '<p class="text-sm text-slate-400">No linked evidence for this finding.</p>';
+          return;
+        }
+
+        body.innerHTML = data.citations.map(c => {
+          const link = safeUrl(c.source_url);
+          const snippet = (c.snippet || '').trim();
+          return `
+            <article class="citation-card">
+              <p class="citation-title">${escapeHtml(c.title)}</p>
+              <div class="citation-meta">
+                <span class="citation-pill">${escapeHtml(c.connector)}</span>
+                <span class="citation-pill">${escapeHtml(c.category)}</span>
+                <span class="citation-pill">confidence ${escapeHtml(c.confidence)}%</span>
+              </div>
+              <div class="citation-snippet">${escapeHtml(snippet || 'No excerpt captured for this evidence.')}</div>
+              <div class="citation-source">
+                ${link
+                  ? `<a class="citation-url" href="${link}" target="_blank" rel="noopener">Open verified source</a>`
+                  : `<span class="citation-ref">No verified web link for this evidence.</span>`}
+                ${!link && c.source_ref ? `<span class="citation-ref">Reference: ${escapeHtml(c.source_ref)}</span>` : ''}
+              </div>
+            </article>
+          `;
+        }).join('');
+
+        const linkedCount = Number(data.real_link_count || data.citations.filter(c => safeUrl(c.source_url)).length);
+        if (linkedCount === 0) {
+          body.insertAdjacentHTML('afterbegin', `
+            <div class="citation-card">
+              <p class="citation-title">No verified web links in this citation set</p>
+              <p class="citation-ref">Some evidences come from non-web references (for example dns:// or mock://). Re-run collection with live connectors for more direct URLs.</p>
+            </div>
+          `);
+        } else {
+          body.insertAdjacentHTML('afterbegin', `
+            <div class="citation-card">
+              <p class="citation-title">Verified web links available: ${linkedCount}/${Number(data.total_count || data.citations.length)}</p>
+              <p class="citation-ref">All clickable links below are direct sources where the evidence was observed.</p>
+            </div>
+          `);
+        }
+      } catch (err) {
+        body.innerHTML = '<p class="text-sm text-red-300">Unable to load citations.</p>';
+      }
+    });
+  });
+});
+</script>
+{% endblock %}

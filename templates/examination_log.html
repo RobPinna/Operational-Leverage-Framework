@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell">
+  {% include "partials/assessment_breadcrumb.html" %}
+
+  <section class="section-stack panel p-4">
+    <div class="flex justify-end mb-3">
+      <a class="btn-ghost" href="/assessments/{{ assessment_id }}/collector-stats">Collector Stats</a>
+    </div>
+
+    <form method="get" action="/assessments/{{ assessment_id }}/examination-log" class="grid gap-2 md:grid-cols-4 items-end">
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-500">Status</label>
+        <select class="select-dark mt-1" name="status">
+          <option value="">All</option>
+          {% for item in status_values %}
+          <option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-500">Source Type</label>
+        <select class="select-dark mt-1" name="source_type">
+          <option value="">All</option>
+          {% for item in source_values %}
+          <option value="{{ item }}" {% if source_type == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs uppercase tracking-wide text-slate-500">Search</label>
+        <input class="input-dark mt-1" type="text" name="q" value="{{ q }}" placeholder="URL / summary / discovered_from / error" />
+      </div>
+      <div class="md:col-span-4 flex gap-2 flex-wrap">
+        <button class="btn-primary" type="submit">Apply</button>
+        <a class="btn-ghost" href="/assessments/{{ assessment_id }}/examination-log">Reset</a>
+        <a class="btn-ghost" href="/assessments/{{ assessment_id }}/examination-log.csv?status={{ status | urlencode }}&source_type={{ source_type | urlencode }}&q={{ q | urlencode }}">Export CSV</a>
+      </div>
+    </form>
+  </section>
+
+  <section class="section-stack panel overflow-x-auto">
+    <table class="min-w-full text-sm examination-table">
+      <thead>
+        <tr>
+          <th class="text-left p-3">URL</th>
+          <th class="text-left p-3">Source</th>
+          <th class="text-left p-3">Status</th>
+          <th class="text-left p-3">Bytes</th>
+          <th class="text-left p-3">Chars</th>
+          <th class="text-left p-3">Rendered</th>
+          <th class="text-left p-3">PDF Pages</th>
+          <th class="text-left p-3">PDF Text</th>
+          <th class="text-left p-3">Fetched At</th>
+          <th class="text-left p-3">Confidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in rows %}
+        {% set row = item.row %}
+        {% set conf = item.confidence %}
+        <tr>
+          <td class="p-3 max-w-[520px]">
+            <div class="text-[12px] font-medium text-slate-700 break-all">{{ row.url }}</div>
+            {% if row.url.startswith('http://') or row.url.startswith('https://') %}
+            <a class="log-link mt-1 inline-block break-all" href="{{ row.url }}" target="_blank" rel="noopener">Open source</a>
+            {% endif %}
+            {% if row.discovered_from %}
+            <div class="text-[11px] text-slate-500 mt-1">from: {{ row.discovered_from }}</div>
+            {% endif %}
+            {% if row.parse_summary %}
+            <div class="text-[11px] text-slate-500 mt-1">{{ row.parse_summary }}</div>
+            {% endif %}
+            {% if row.error_message %}
+            <div class="text-[11px] text-red-600 mt-1">{{ row.error_message }}</div>
+            {% endif %}
+          </td>
+          <td class="p-3"><span class="badge">{{ row.source_type }}</span></td>
+          <td class="p-3">
+            <span class="status-pill {{ row.status }}">{{ row.status }}</span>
+          </td>
+          <td class="p-3">{{ row.bytes if row.bytes is not none else '-' }}</td>
+          <td class="p-3">{{ row.extracted_chars if row.extracted_chars is not none else '-' }}</td>
+          <td class="p-3">{{ 'yes' if row.was_rendered else 'no' if row.was_rendered is not none else '-' }}</td>
+          <td class="p-3">{{ row.pdf_pages if row.pdf_pages is not none else '-' }}</td>
+          <td class="p-3">{{ row.pdf_text_chars if row.pdf_text_chars is not none else '-' }}</td>
+          <td class="p-3">{{ row.fetched_at.strftime('%Y-%m-%d %H:%M:%S') if row.fetched_at else '-' }}</td>
+          <td class="p-3"><span class="badge-confidence {{ 'high' if conf >= 75 else ('med' if conf >= 50 else 'low') }}">{{ conf }}%</span></td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10" class="p-6 text-slate-500">No examination log entries for the selected filters.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

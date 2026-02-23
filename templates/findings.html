@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell">
+  {% include "partials/assessment_breadcrumb.html" %}
+
+  <section class="section-stack panel p-3">
+    <div class="flex flex-wrap gap-2">
+      {% for key, label in [("all", "All"), ("exposure", "Public Information Exposure"), ("mention", "Mentions"), ("touchpoint", "External Contact Channels"), ("pivot", "Risk to Clients via Impersonation")] %}
+      <a class="tab-pill {% if tab == key %}active{% endif %}" href="/assessments/{{ assessment.id }}/findings?tab={{ key }}">
+        {{ label }}
+        {% if key != 'all' %}<span class="text-slate-400">{{ type_counts.get(key, 0) }}</span>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="section-stack grid gap-3 xl:grid-cols-2">
+    {% for item in cards %}
+    <article class="panel p-4">
+      <header class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 class="item-title">{{ item.title }}</h2>
+          <p class="item-meta mt-1">Finding #{{ item.id }}</p>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <span class="badge">
+            {% if item.type == 'touchpoint' %}External Contact Channels{% elif item.type == 'pivot' %}Risk to Clients via Impersonation{% elif item.type == 'exposure' %}Public Information Exposure{% elif item.type == 'mention' %}Mentions{% else %}{{ item.type }}{% endif %}
+          </span>
+          <span class="badge-severity {{ item.severity_label }}">{{ item.severity_label }}</span>
+          <span class="badge-confidence {{ item.confidence_label }}">{{ item.confidence }}%</span>
+        </div>
+      </header>
+
+      <p class="item-description clamp-6 mt-3">{{ item.description }}</p>
+
+      <ul class="mt-3 space-y-1 text-sm text-slate-300">
+        <li><span class="text-slate-400">What enables it:</span> {{ item.bullets.enables }}</li>
+        <li><span class="text-slate-400">Who is impacted:</span> {{ item.bullets.impacted }}</li>
+        <li><span class="text-slate-400">Why it matters:</span> {{ item.bullets.matters }}</li>
+      </ul>
+
+      <div class="divider"></div>
+
+      <div class="space-y-2">
+        <details class="accordion-item">
+          <summary>View links and evidence excerpts ({{ item.evidence | length }})</summary>
+          <div class="accordion-body">
+            {% for ev in item.evidence %}
+            <article class="info-card compact">
+              <div class="flex gap-2 flex-wrap mb-1">
+                <span class="badge">{{ ev.connector }}</span>
+                <span class="badge">
+                  {% if ev.category == 'touchpoint' %}External Contact Channels{% elif ev.category == 'pivot' %}Risk to Clients via Impersonation{% elif ev.category == 'exposure' %}Public Information Exposure{% elif ev.category == 'mention' %}Mentions{% else %}{{ ev.category }}{% endif %}
+                </span>
+                <span class="badge-confidence {{ 'high' if ev.confidence >= 75 else ('med' if ev.confidence >= 50 else 'low') }}">{{ ev.confidence }}%</span>
+              </div>
+              <p class="item-title text-sm">{{ ev.title }}</p>
+              <p class="text-sm text-slate-300 mt-1">{{ ev.snippet if ev.snippet else 'No snippet captured.' }}</p>
+              {% if ev.source_url %}
+              <a class="link-inline mt-2 inline-block break-all" href="{{ ev.source_url }}" target="_blank" rel="noopener">{{ ev.source_url }}</a>
+              {% elif ev.source_ref %}
+              <p class="text-xs text-slate-500 mt-2 break-all">Reference: {{ ev.source_ref }}</p>
+              {% endif %}
+            </article>
+            {% else %}
+            <p class="text-sm text-slate-500">No linked evidence for this finding.</p>
+            {% endfor %}
+          </div>
+        </details>
+
+        <details class="accordion-item">
+          <summary>Assumptions</summary>
+          <div class="accordion-body">
+            <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1">
+              {% for row in item.assumptions %}
+              <li>{{ row }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </details>
+
+        <details class="accordion-item">
+          <summary>Gaps</summary>
+          <div class="accordion-body">
+            <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1">
+              {% for row in item.gaps %}
+              <li>{{ row }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </details>
+
+        <details class="accordion-item">
+          <summary>Defensive Actions</summary>
+          <div class="accordion-body">
+            <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1">
+              {% for row in item.defensive_actions %}
+              <li>{{ row }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </details>
+      </div>
+    </article>
+    {% else %}
+    <div class="panel p-6 text-slate-500">No findings for the selected filter.</div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

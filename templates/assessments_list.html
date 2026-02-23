@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell section-stack">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
+    <div>
+      <h1 class="workspace-page-title">Assessments</h1>
+      <p class="workspace-page-subtitle">Structured external abuse-path modeling based on public operational signals.</p>
+    </div>
+    <a href="/assessments/new" class="btn-primary">New Assessment</a>
+  </div>
+
+  <form method="get" action="/assessments" class="panel p-4 mt-5 flex gap-3 items-center">
+    <input class="input-dark" type="text" name="q" value="{{ q }}" placeholder="Search company or domain" />
+    <button type="submit" class="btn-ghost">Search</button>
+  </form>
+
+  <div class="panel p-5 mt-7 overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead class="text-slate-300 border-b border-slate-700">
+        <tr>
+          <th class="text-left p-4">ID</th>
+          <th class="text-left p-4">Company</th>
+          <th class="text-left p-4">Domain</th>
+          <th class="text-left p-4">Status</th>
+          <th class="text-left p-4">Updated</th>
+          <th class="text-left p-4">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in assessments %}
+        <tr class="border-b border-slate-800/80">
+          <td class="p-4">#{{ a.id }}</td>
+          <td class="p-4 text-white">{{ a.company_name }}</td>
+          <td class="p-4">{{ a.domain }}</td>
+          <td class="p-4"><span class="badge">{{ a.status }}</span></td>
+          <td class="p-4">{{ a.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="p-4">
+            <div class="flex gap-3 flex-wrap">
+              <a class="text-cyan-300 hover:text-cyan-200" href="/assessments/{{ a.id }}/overview">Open Context</a>
+              <a class="text-cyan-300 hover:text-cyan-200" href="/assessments/new?assessment_id={{ a.id }}">Open Wizard</a>
+              <form method="post" action="/assessments/{{ a.id }}/delete"
+                onsubmit="return confirm('Delete assessment {{ a.company_name }} (#{{ a.id }})? This will remove documents, evidence, risks, logs, and reports.');">
+                <button type="submit" class="text-red-300 hover:text-red-200 font-semibold">Delete</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="p-6 text-slate-500">No assessments yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

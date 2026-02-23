@@ -1,0 +1,7 @@
+<ul class="mt-2 space-y-1 text-sm text-slate-300">
+  {% for line in collect_logs %}
+  <li>- {{ line }}</li>
+  {% else %}
+  <li class="text-slate-500">No runs yet.</li>
+  {% endfor %}
+</ul>

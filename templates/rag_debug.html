@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell">
+  {% include "partials/assessment_breadcrumb.html" %}
+
+  <section class="section-stack panel p-3">
+    <form method="get" action="/assessments/{{ assessment.id }}/rag-debug" class="flex gap-2 items-end flex-wrap">
+      <div>
+        <label class="text-xs uppercase tracking-wide text-slate-500">Top Passages per Query</label>
+        <input class="input-dark mt-1 w-28" type="number" name="top_k" min="1" max="10" value="{{ top_k }}" />
+      </div>
+      <button class="btn-primary" type="submit">Refresh Debug</button>
+      <a class="btn-ghost" href="/assessments/{{ assessment.id }}/collector-stats">Collector Stats</a>
+    </form>
+  </section>
+
+  <section class="section-stack grid gap-3 sm:grid-cols-3">
+    <article class="kpi-card p-4">
+      <p class="kpi-label">Indexed Documents</p>
+      <p class="kpi-value">{{ debug_payload.num_documents }}</p>
+    </article>
+    <article class="kpi-card p-4">
+      <p class="kpi-label">Indexed Passages</p>
+      <p class="kpi-value">{{ debug_payload.num_passages }}</p>
+    </article>
+    <article class="kpi-card p-4">
+      <p class="kpi-label">Global Hint</p>
+      <p class="item-description mt-2">{{ debug_payload.global_hint if debug_payload.global_hint else 'index healthy' }}</p>
+    </article>
+  </section>
+
+  <section class="section-stack space-y-3">
+    {% for section in debug_payload.sections %}
+    <article class="panel p-4">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 class="section-title">{{ section.query_id }} - {{ section.query }}</h2>
+          <p class="section-subtitle">Top {{ top_k }} retrieved passages with scores.</p>
+        </div>
+        {% if not section.has_results %}
+        <span class="badge-severity med">{{ section.hint }}</span>
+        {% endif %}
+      </div>
+
+      <div class="mt-3 space-y-2">
+        {% for p in section.top_passages %}
+        <article class="info-card compact">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <span class="badge">score {{ '%.4f' | format(p.score) }}</span>
+            <span class="badge">doc {{ p.doc_id }}</span>
+          </div>
+          {% if p.url %}
+          <a class="link-inline mt-2 inline-block break-all" href="{{ p.url }}" target="_blank" rel="noopener">{{ p.url }}</a>
+          {% endif %}
+          <p class="item-description mt-2">{{ p.snippet }}</p>
+        </article>
+        {% else %}
+        <div class="empty-state">No passages retrieved. Suggestion: index empty / collector failed.</div>
+        {% endfor %}
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

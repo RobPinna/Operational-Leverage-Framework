@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-shell">
+  {% include "partials/assessment_breadcrumb.html" %}
+
+  <section class="section-stack space-y-3">
+    {% for c in cards %}
+    <article class="panel p-4">
+      <header class="flex items-start justify-between gap-3 flex-wrap">
+        <div class="max-w-4xl">
+          <h2 class="item-title">{{ c.title }}</h2>
+          <p class="item-description mt-2">{{ c.summary }}</p>
+        </div>
+        <span class="badge-severity {{ c.risk_label }}">risk {{ c.risk_level }}/5</span>
+      </header>
+
+      <div class="mt-3 flex gap-2 flex-wrap">
+        <details class="accordion-item w-full">
+          <summary>Show correlated signals</summary>
+          <div class="accordion-body">
+            <ul class="list-disc pl-5 text-sm text-slate-300 space-y-1">
+              {% for row in c.signals %}
+              <li>{{ row }}</li>
+              {% else %}
+              <li>No signal summary available.</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </details>
+        <details class="accordion-item w-full">
+          <summary>Show evidence links and excerpts ({{ c.evidence | length }})</summary>
+          <div class="accordion-body space-y-2">
+            {% for ev in c.evidence %}
+            <article class="info-card compact">
+              <div class="flex items-center justify-between gap-2 flex-wrap">
+                <p class="item-title text-sm">{{ ev.title }}</p>
+                <span class="badge-confidence {{ 'high' if ev.confidence >= 75 else ('med' if ev.confidence >= 50 else 'low') }}">{{ ev.confidence }}%</span>
+              </div>
+              <p class="item-meta mt-1">{{ ev.connector }}</p>
+              <p class="text-sm text-slate-300 mt-2">{{ ev.snippet }}</p>
+              {% if ev.source_url %}
+              <a class="link-inline mt-2 inline-block break-all" href="{{ ev.source_url }}" target="_blank" rel="noopener">Open source</a>
+              {% endif %}
+            </article>
+            {% else %}
+            <p class="text-sm text-slate-500">No evidence attached.</p>
+            {% endfor %}
+          </div>
+        </details>
+      </div>
+    </article>
+    {% else %}
+    <div class="panel p-6 text-slate-500">No cross-signal correlations generated yet. Run collection to populate this module.</div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}
+
