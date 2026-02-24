@@ -6,41 +6,26 @@ Operational Leverage Framework is an evidence-first CTI/cyber risk assessment pr
 - Python `>=3.11` (from `pyproject.toml`).
 - Optional: `OPENAI_API_KEY` only if you want OpenAI-backed reasoning features.
 
-## Quickstart (3 commands)
+## Quickstart (One Command)
 From repository root:
 
 ```bash
-python scripts/run.py setup --venv
-python scripts/run.py test
-python scripts/run.py cli
-```
-
-## Come usare il progetto (release GitHub)
-1. Clona il repository.
-2. Crea `.env` partendo da `.env.example`:
-```bat
-copy .env.example .env
-```
-```bash
-cp .env.example .env
-```
-3. Sostituisci i placeholder in `.env`:
-- `SECRET_KEY=change-me-exposuremapper-secret`
-- `PASSWORD_PEPPER=change-me-password-pepper`
-- `API_KEY_PEPPER=change-me-api-key-pepper`
-- `DEFAULT_ADMIN_PASSWORD=change-me-admin-password`
-- `OPENAI_API_KEY=` (opzionale, lascia vuoto per modalita local/offline)
-4. Avvio web app:
-```bash
 python scripts/run.py web
 ```
-5. Avvio web app senza apertura browser:
+
+This command will:
+- create `.venv` if missing (or fall back to your current Python if `.venv` creation is blocked),
+- install dependencies (`pip install -e ".[dev]"` when supported, otherwise `requirements.txt`),
+- start FastAPI on `http://127.0.0.1:56461`,
+- open the browser automatically.
+
+No manual `.env` setup is required for local UI startup.
+If `.env` is missing, runtime-safe local defaults are generated for `SECRET_KEY`, `PASSWORD_PEPPER`, and `API_KEY_PEPPER`.
+
+Run without auto-opening the browser:
+
 ```bash
 python scripts/run.py web --no-browser
-```
-6. Verifica release-safety prima della pubblicazione:
-```bash
-python scripts/run.py safety
 ```
 
 ## Cross-Platform Commands
@@ -51,8 +36,37 @@ python scripts/run.py safety
 - Web app: `python scripts/run.py web`
 - Safety checks: `python scripts/run.py safety`
 
-## Expected output
-For the default CLI command (`python scripts/run.py cli`), output is written to:
+## Advanced Configuration (`.env` Optional)
+For stable secrets or custom runtime settings, create `.env` from `.env.example`.
+
+```bash
+cp .env.example .env
+```
+
+Windows CMD:
+
+```bat
+copy .env.example .env
+```
+
+Replace placeholders in `.env`:
+- `SECRET_KEY=change-me-exposuremapper-secret`
+- `PASSWORD_PEPPER=change-me-password-pepper`
+- `API_KEY_PEPPER=change-me-api-key-pepper`
+- `DEFAULT_ADMIN_PASSWORD=change-me-admin-password`
+- `OPENAI_API_KEY=` (optional, leave empty for local/offline mode)
+
+## Legacy Windows Shortcut (Optional)
+`start-dev.cmd` is kept as a legacy helper and simply forwards to:
+
+```bat
+python scripts\run.py web
+```
+
+Use the Python command above as the primary startup path.
+
+## Expected CLI Output
+For `python scripts/run.py cli`, output is written to:
 - `examples/output/hospitality.json`
 
 The command also prints:

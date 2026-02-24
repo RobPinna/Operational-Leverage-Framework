@@ -10,11 +10,14 @@ __pycache__/
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
+data/
 
 # Runtime export artifacts
-exports/**/*.json
-exports/**/*.pdf
-exports/rag_indexes/
+exports/**
+!exports/
+!exports/README.md
+!exports/.gitkeep
 
 # Local scratch artifacts
 py_write_test.txt

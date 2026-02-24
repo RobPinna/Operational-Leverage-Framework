@@ -4,7 +4,6 @@ import argparse
 import fnmatch
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import threading
@@ -58,6 +57,21 @@ def _venv_python() -> Path:
     return ROOT_DIR / ".venv" / "bin" / "python"
 
 
+def _is_venv_python(python_exec: str) -> bool:
+    try:
+        return Path(python_exec).resolve() == _venv_python().resolve()
+    except OSError:
+        return Path(python_exec) == _venv_python()
+
+
+def _pip_install_cmd(python_exec: str, *args: str) -> list[str]:
+    cmd = [python_exec, "-m", "pip", "install"]
+    if not _is_venv_python(python_exec):
+        cmd.append("--user")
+    cmd.extend(args)
+    return cmd
+
+
 def _python_for_tasks() -> str:
     venv_python = _venv_python()
     if venv_python.exists():
@@ -85,11 +99,11 @@ def _has_editable_install_support() -> bool:
 
 def _install_setup_dependencies(python_exec: str) -> int:
     if _has_editable_install_support():
-        return _run([python_exec, "-m", "pip", "install", "-e", ".[dev]"])
+        return _run(_pip_install_cmd(python_exec, "-e", ".[dev]"))
 
     requirements = ROOT_DIR / "requirements.txt"
     if requirements.exists():
-        return _run([python_exec, "-m", "pip", "install", "-r", "requirements.txt"])
+        return _run(_pip_install_cmd(python_exec, "-r", "requirements.txt"))
 
     print("error: no install target found (pyproject.toml or requirements.txt).", file=sys.stderr)
     return 2
@@ -98,8 +112,21 @@ def _install_setup_dependencies(python_exec: str) -> int:
 def _install_runtime_dependencies(python_exec: str) -> int:
     requirements = ROOT_DIR / "requirements.txt"
     if requirements.exists():
-        return _run([python_exec, "-m", "pip", "install", "-r", "requirements.txt"])
+        return _run(_pip_install_cmd(python_exec, "-r", "requirements.txt"))
     return _install_setup_dependencies(python_exec)
+
+
+def _ensure_pip(python_exec: str) -> int:
+    probe = _run_capture([python_exec, "-m", "pip", "--version"])
+    if probe.returncode == 0:
+        return 0
+    print("pip not found for selected interpreter; bootstrapping with ensurepip")
+    code = _run([python_exec, "-m", "ensurepip", "--upgrade"])
+    if code != 0:
+        return code
+    if _is_venv_python(python_exec):
+        return _run([python_exec, "-m", "pip", "install", "--upgrade", "pip"])
+    return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -107,7 +134,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
         code = _ensure_venv()
         if code != 0:
             return code
-    return _install_setup_dependencies(_python_for_tasks())
+    python_exec = _python_for_tasks()
+    code = _ensure_pip(python_exec)
+    if code != 0:
+        return code
+    return _install_setup_dependencies(python_exec)
 
 
 def cmd_test(args: argparse.Namespace) -> int:
@@ -151,18 +182,31 @@ def cmd_web(args: argparse.Namespace) -> int:
 
     code = _ensure_venv()
     if code != 0:
-        return code
+        print("warning: failed to create .venv; falling back to current Python interpreter.", file=sys.stderr)
 
-    python_exec = str(_venv_python())
-    code = _install_runtime_dependencies(python_exec)
+    python_exec = _python_for_tasks()
+    code = _ensure_pip(python_exec)
+    if code != 0 and _is_venv_python(python_exec):
+        print("warning: pip bootstrap failed in .venv; falling back to current Python interpreter.", file=sys.stderr)
+        python_exec = sys.executable
+        code = _ensure_pip(python_exec)
     if code != 0:
         return code
 
-    env_example = ROOT_DIR / ".env.example"
+    code = _install_runtime_dependencies(python_exec)
+    if code != 0 and _is_venv_python(python_exec):
+        print("warning: dependency install failed in .venv; retrying with current Python interpreter.", file=sys.stderr)
+        python_exec = sys.executable
+        code = _ensure_pip(python_exec)
+        if code != 0:
+            return code
+        code = _install_runtime_dependencies(python_exec)
+    if code != 0:
+        return code
+
     env_file = ROOT_DIR / ".env"
-    if not env_file.exists() and env_example.exists():
-        shutil.copyfile(env_example, env_file)
-        print("created .env from .env.example")
+    if not env_file.exists():
+        print("note: .env not found; using runtime-generated local defaults for secrets and peppers.")
 
     app_url = f"http://{args.host}:{args.port}"
     health_url = f"{app_url}/healthz"

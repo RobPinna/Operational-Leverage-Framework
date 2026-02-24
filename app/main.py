@@ -27,7 +27,7 @@ def _sqlite_path_from_url(database_url: str) -> Path | None:
 
 def _backup_sqlite_files(db_path: Path, *, reason: str, include_db: bool) -> None:
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    backup_dir = BASE_DIR / "exports" / "db_recovery"
+    backup_dir = get_settings().runtime_dir / "db_recovery"
     backup_dir.mkdir(parents=True, exist_ok=True)
     suffix = f".{reason}.{ts}"
     journal = Path(str(db_path) + "-journal")
