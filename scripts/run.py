@@ -266,7 +266,9 @@ def cmd_safety(args: argparse.Namespace) -> int:
     failures += int(env_tracked)
 
     db_runtime = [
-        f for f in tracked_files if _exists(f) and (f.endswith(".db-journal") or f.endswith(".db-wal") or f.endswith(".db"))
+        f
+        for f in tracked_files
+        if _exists(f) and (f.endswith(".db-journal") or f.endswith(".db-wal") or f.endswith(".db"))
     ]
     _print_check(
         "no tracked database runtime artifacts",
@@ -291,7 +293,9 @@ def cmd_safety(args: argparse.Namespace) -> int:
     failures += int(bool(secret_like))
 
     allowed_export_files = {"exports/README.md", "exports/.gitkeep"}
-    export_runtime = [f for f in tracked_files if _exists(f) and f.startswith("exports/") and f not in allowed_export_files]
+    export_runtime = [
+        f for f in tracked_files if _exists(f) and f.startswith("exports/") and f not in allowed_export_files
+    ]
     _print_check(
         "no tracked exports runtime data",
         not export_runtime,

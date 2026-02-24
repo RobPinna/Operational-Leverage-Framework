@@ -11,8 +11,7 @@ from pathlib import Path
 
 import uvicorn
 
-from src.operational_leverage_framework import get_runtime_version
-
+from operational_leverage_framework import get_runtime_version
 
 APP_IMPORT_PATH = "app.main:app"
 HOST = "127.0.0.1"

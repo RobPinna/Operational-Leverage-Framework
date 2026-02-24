@@ -75,9 +75,15 @@ def _host_from_url(value: str) -> str:
 
 
 def build_cross_signal_correlations(db: Session, assessment: Assessment) -> int:
-    rows = db.execute(
-        select(Evidence).where(Evidence.assessment_id == assessment.id).order_by(Evidence.confidence.desc(), Evidence.id.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(Evidence)
+            .where(Evidence.assessment_id == assessment.id)
+            .order_by(Evidence.confidence.desc(), Evidence.id.desc())
+        )
+        .scalars()
+        .all()
+    )
 
     db.execute(delete(CrossSignalCorrelation).where(CrossSignalCorrelation.assessment_id == assessment.id))
     db.commit()
@@ -135,10 +141,7 @@ def build_cross_signal_correlations(db: Session, assessment: Assessment) -> int:
     # Pattern correlation requested: job posting + DNS/subdomain + website vendor JS.
     job_hits = [ev for ev in rows if _signal_type(ev) == "job_posting" and _has_channel_terms(ev)]
     dns_hits = [ev for ev in rows if _signal_type(ev) == "dns_subdomain" and _has_channel_terms(ev)]
-    js_hits = [
-        ev for ev in rows
-        if _signal_type(ev) == "vendor_js" and (_extract_vendors(ev) & HELPDESK_VENDORS)
-    ]
+    js_hits = [ev for ev in rows if _signal_type(ev) == "vendor_js" and (_extract_vendors(ev) & HELPDESK_VENDORS)]
     if job_hits and dns_hits and js_hits and "pattern:support_impersonation" not in used_keys:
         refs = [job_hits[0].id, dns_hits[0].id, js_hits[0].id]
         dns_host = _host_from_url(dns_hits[0].source_url) or dns_hits[0].source_url
@@ -192,4 +195,3 @@ def build_cross_signal_correlations(db: Session, assessment: Assessment) -> int:
 
     db.commit()
     return created
-

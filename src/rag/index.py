@@ -138,12 +138,16 @@ def _build_passages(rows: list[Document]) -> tuple[list[_Passage], dict[str, lis
 def build_index(assessment_id: int) -> dict:
     """Build and persist a local BM25 index for one assessment."""
     with SessionLocal() as db:
-        rows = db.execute(
-            select(Document).where(
-                Document.assessment_id == assessment_id,
-                Document.extracted_text != "",
+        rows = (
+            db.execute(
+                select(Document).where(
+                    Document.assessment_id == assessment_id,
+                    Document.extracted_text != "",
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     passages, inverted, doc_freq, avgdl = _build_passages(rows)
     payload = {

@@ -54,9 +54,13 @@ def mitigations_page(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
 
-    mitigations = db.execute(
-        select(Mitigation).where(Mitigation.assessment_id == assessment_id).order_by(Mitigation.priority.asc())
-    ).scalars().all()
+    mitigations = (
+        db.execute(
+            select(Mitigation).where(Mitigation.assessment_id == assessment_id).order_by(Mitigation.priority.asc())
+        )
+        .scalars()
+        .all()
+    )
 
     cards = []
     for item in mitigations:

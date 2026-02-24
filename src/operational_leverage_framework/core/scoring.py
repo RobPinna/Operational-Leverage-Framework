@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.signal_model import compute_hypothesis_confidence
+from ..scoring.signal_model import compute_hypothesis_confidence
 
 from ..models import EvidenceItem
 

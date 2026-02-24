@@ -1,10 +1,4 @@
-"""Compatibility bridge for legacy imports.
-
-Canonical implementation now lives in:
-`operational_leverage_framework.scoring.signal_model`.
-"""
-
-from operational_leverage_framework.scoring.signal_model import (  # noqa: F401
+from .signal_model import (
     ATTENTION_KEYWORDS,
     CONTACT_FORM_HINTS,
     EMAIL_RE,

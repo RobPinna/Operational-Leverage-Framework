@@ -157,9 +157,15 @@ def findings_page(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
 
-    rows = db.execute(
-        select(Finding).where(Finding.assessment_id == assessment_id).order_by(Finding.severity.desc(), Finding.confidence.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(Finding)
+            .where(Finding.assessment_id == assessment_id)
+            .order_by(Finding.severity.desc(), Finding.confidence.desc())
+        )
+        .scalars()
+        .all()
+    )
 
     valid_tabs = ["all", "exposure", "mention", "touchpoint", "pivot"]
     selected_tab = tab if tab in valid_tabs else "all"

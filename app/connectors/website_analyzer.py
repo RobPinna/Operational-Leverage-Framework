@@ -37,12 +37,16 @@ class WebsiteAnalyzerConnector(ConnectorBase):
             return []
 
         with SessionLocal() as db:
-            docs = db.execute(
-                select(Document).where(
-                    Document.assessment_id == target.assessment_id,
-                    Document.doc_type == "html",
+            docs = (
+                db.execute(
+                    select(Document).where(
+                        Document.assessment_id == target.assessment_id,
+                        Document.doc_type == "html",
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         if not docs:
             target.log_examination(

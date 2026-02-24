@@ -44,9 +44,7 @@ class SocialMockConnector(ConnectorBase):
                     connector=self.name,
                     category="mention",
                     title=f"{target.company_name}: {post['title']}",
-                    snippet=(
-                        f"Theme={post['theme']}; Tone={post['tone']}; Community={post['community']}"
-                    ),
+                    snippet=(f"Theme={post['theme']}; Tone={post['tone']}; Community={post['community']}"),
                     source_url=source_url,
                     confidence=58 if target.demo_mode else 45,
                     raw={"target": target.company_name, **post},

@@ -70,6 +70,7 @@ def _impact_points(value: str) -> list[str]:
         parts = [raw.strip().capitalize()]
     return parts[:3] if parts else ["Operations"]
 
+
 def _short_risk_title(*, assessment: Assessment, row: Hypothesis) -> str:
     sector = (assessment.sector or "").strip().lower()
     rt = (row.risk_type or "").strip().lower()
@@ -175,19 +176,27 @@ def _confirm_deny_points(*, meta: dict, process_flags: dict | None) -> tuple[lis
     if has_social and social_dm_workflow:
         confirm.append("The official social profile advertises DM-based contact handling.")
     if has_social and social_to_booking:
-        confirm.append("Social profiles link into booking/payment flows, increasing reliance on clear channel verification.")
+        confirm.append(
+            "Social profiles link into booking/payment flows, increasing reliance on clear channel verification."
+        )
     if has_cred:
         confirm.append("Credential/account handling is referenced alongside externally accessible support channels.")
     if has_booking:
         confirm.append("Booking/billing/payment workflow references appear alongside externally accessible channels.")
     if trust_friction:
-        confirm.append("No clear public official-channel verification or anti-phishing guidance was found in the indexed corpus.")
+        confirm.append(
+            "No clear public official-channel verification or anti-phishing guidance was found in the indexed corpus."
+        )
 
     # What would deny (conditions that, if present, would reduce or negate this scenario)
     deny.append("A centralized, signed registry of official contact channels is published and consistently referenced.")
-    deny.append("A clear statement exists and is visible: the organization will never request passwords or login details.")
+    deny.append(
+        "A clear statement exists and is visible: the organization will never request passwords or login details."
+    )
     if has_social and (social_dm_workflow or social_to_booking):
-        deny.append("Clear guidance exists: sensitive actions are never handled via DM; booking/payment changes require verified channels.")
+        deny.append(
+            "Clear guidance exists: sensitive actions are never handled via DM; booking/payment changes require verified channels."
+        )
     if has_social and social_verified:
         deny.append("Verified social accounts are used as trust anchors and consistently linked from official pages.")
     if has_booking or int((counts or {}).get("PROCESS_CUE", 0) or 0) > 0:
@@ -295,9 +304,13 @@ def hypotheses_page(
         for item in db.execute(select(Document).where(Document.id.in_(list(doc_ids)))).scalars().all():
             docs_by_id[item.id] = item
     if doc_urls:
-        for item in db.execute(
-            select(Document).where(Document.assessment_id == assessment_id, Document.url.in_(list(doc_urls)))
-        ).scalars().all():
+        for item in (
+            db.execute(
+                select(Document).where(Document.assessment_id == assessment_id, Document.url.in_(list(doc_urls)))
+            )
+            .scalars()
+            .all()
+        ):
             docs_by_url[item.url] = item
 
     for row in rows:
@@ -327,7 +340,9 @@ def hypotheses_page(
 
         base_avg = 0
         if evidence_refs:
-            base_avg = int(sum(int(x.get("confidence", 50)) for x in evidence_refs if isinstance(x, dict)) / len(evidence_refs))
+            base_avg = int(
+                sum(int(x.get("confidence", 50)) for x in evidence_refs if isinstance(x, dict)) / len(evidence_refs)
+            )
 
         # Prefer stored confidence from generation, otherwise compute with signal model.
         conf = int(row.confidence or 0)
@@ -340,7 +355,11 @@ def hypotheses_page(
         process_flags = None
         if isinstance(meta_counts_raw, dict):
             merged_from = int(meta_counts_raw.pop("__merged_from__", 1) or 1)
-            merged_query_ids = meta_counts_raw.pop("__merged_query_ids__", []) if isinstance(meta_counts_raw.get("__merged_query_ids__", []), list) else []
+            merged_query_ids = (
+                meta_counts_raw.pop("__merged_query_ids__", [])
+                if isinstance(meta_counts_raw.get("__merged_query_ids__", []), list)
+                else []
+            )
             debug_blob = meta_counts_raw.pop("__debug__", None)
             baseline_exposure = bool(meta_counts_raw.pop("__baseline_exposure__", False))
             tags = meta_counts_raw.pop("__tags__", []) if isinstance(meta_counts_raw.get("__tags__", []), list) else []
@@ -369,17 +388,31 @@ def hypotheses_page(
         if conf <= 0:
             conf = int(calc_conf)
 
-        counts = meta.get("signal_counts") if isinstance(meta.get("signal_counts"), dict) else signal_counts(evidence_refs)
-        diversity = int(meta.get("signal_diversity_count") or len([k for k, v in (counts or {}).items() if int(v or 0) > 0]))
+        counts = (
+            meta.get("signal_counts") if isinstance(meta.get("signal_counts"), dict) else signal_counts(evidence_refs)
+        )
+        diversity = int(
+            meta.get("signal_diversity_count") or len([k for k, v in (counts or {}).items() if int(v or 0) > 0])
+        )
         meta["signal_counts"] = counts or {}
         meta["signal_diversity_count"] = diversity
-        meta["has_critical_signal"] = any(int((counts or {}).get(k, 0) or 0) > 0 for k in ("PROCESS_CUE", "VENDOR_CUE", "ORG_CUE"))
+        meta["has_critical_signal"] = any(
+            int((counts or {}).get(k, 0) or 0) > 0 for k in ("PROCESS_CUE", "VENDOR_CUE", "ORG_CUE")
+        )
         cov = coverage_label_from_signals(meta)
         if baseline_exposure:
             cov = "WEAK"
 
         pills = []
-        for key in ("CONTACT_CHANNEL", "SOCIAL_TRUST_NODE", "PROCESS_CUE", "VENDOR_CUE", "ORG_CUE", "EXTERNAL_ATTENTION", "INFRA_CUE"):
+        for key in (
+            "CONTACT_CHANNEL",
+            "SOCIAL_TRUST_NODE",
+            "PROCESS_CUE",
+            "VENDOR_CUE",
+            "ORG_CUE",
+            "EXTERNAL_ATTENTION",
+            "INFRA_CUE",
+        ):
             count = int((counts or {}).get(key, 0) or 0)
             active = count > 0
             pills.append(
@@ -413,7 +446,9 @@ def hypotheses_page(
             impact_rationale = f"{original_title}. {impact_rationale}".strip().strip(".") + "."
 
         eq_label = _evidence_quality_label(meta)
-        confirm_points, deny_points = _confirm_deny_points(meta=meta, process_flags=process_flags if isinstance(process_flags, dict) else None)
+        confirm_points, deny_points = _confirm_deny_points(
+            meta=meta, process_flags=process_flags if isinstance(process_flags, dict) else None
+        )
 
         card = {
             "id": row.id,
@@ -480,6 +515,7 @@ def hypotheses_generate_legacy(
         return RedirectResponse(url="/assessments", status_code=302)
 
     from app.services.assessment_service import get_rag_advanced_state
+
     rag_cfg = get_rag_advanced_state(db)
     chosen_top_k = int(top_k) if isinstance(top_k, int) else int(rag_cfg.get("top_k", 4))
     chosen_ratio = float(rag_cfg.get("min_ratio", 0.70))
@@ -487,9 +523,11 @@ def hypotheses_generate_legacy(
     generate_hypotheses(assessment_id, plan)
     try:
         from app.services.trust_workflows import generate_trust_workflow_map
+
         generate_trust_workflow_map(db, assessment_id, top_k=int(chosen_top_k), min_ratio=float(chosen_ratio))
     except Exception:
         import logging
+
         logging.getLogger(__name__).exception("Trust workflow map generation failed for assessment %s", assessment_id)
     return RedirectResponse(url=f"/assessments/{assessment_id}/risks", status_code=302)
 
@@ -506,6 +544,7 @@ def hypotheses_generate_context(
         return RedirectResponse(url="/assessments", status_code=302)
 
     from app.services.assessment_service import get_rag_advanced_state
+
     rag_cfg = get_rag_advanced_state(db)
     chosen_top_k = int(top_k) if isinstance(top_k, int) else int(rag_cfg.get("top_k", 4))
     chosen_ratio = float(rag_cfg.get("min_ratio", 0.70))
@@ -513,9 +552,11 @@ def hypotheses_generate_context(
     generate_hypotheses(assessment_id, plan)
     try:
         from app.services.trust_workflows import generate_trust_workflow_map
+
         generate_trust_workflow_map(db, assessment_id, top_k=int(chosen_top_k), min_ratio=float(chosen_ratio))
     except Exception:
         import logging
+
         logging.getLogger(__name__).exception("Trust workflow map generation failed for assessment %s", assessment_id)
     return RedirectResponse(url=f"/assessments/{assessment_id}/risks", status_code=302)
 

@@ -30,3 +30,4 @@ dist_release/
 
 # Local scratch artifacts
 py_write_test.txt
+tests/.tmp_local/

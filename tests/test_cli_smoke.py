@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from operational_leverage_framework.cli.main import main
-
 
 LOCAL_TMP_ROOT = Path(__file__).resolve().parent / ".tmp_local"
 
@@ -55,8 +55,11 @@ def test_olf_score_cli_smoke() -> None:
 
 def test_app_health_smoke() -> None:
     tmp = _make_local_tmp("health")
-    db_path = tmp / "health.db"
-    os.environ["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
+    for module_name in list(sys.modules):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+    os.environ["RUNTIME_DIR"] = str(tmp.resolve())
+    os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
     from app.main import create_app
 

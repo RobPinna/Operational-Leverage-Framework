@@ -256,7 +256,9 @@ def classify_evidence(
     mime = _norm(mime_type)
 
     if _is_generic_web(text=text, host=host, path=path):
-        weight = 0.05 if (_contains_any(host, ANALYTICS_HOST_HINTS) or _contains_any(text, ANALYTICS_TEXT_HINTS)) else 0.10
+        weight = (
+            0.05 if (_contains_any(host, ANALYTICS_HOST_HINTS) or _contains_any(text, ANALYTICS_TEXT_HINTS)) else 0.10
+        )
         return EvidenceQuality(
             evidence_kind="GENERIC_WEB",
             quality_tier="BOILERPLATE",
@@ -286,7 +288,9 @@ def classify_evidence(
             rationale="Vendor indicator present but workflow specificity is limited",
         )
 
-    if conn in {"email_posture_analyzer", "dns_footprint"} or _contains_any(text, ("dmarc", "spf", "dkim", "mx record")):
+    if conn in {"email_posture_analyzer", "dns_footprint"} or _contains_any(
+        text, ("dmarc", "spf", "dkim", "mx record")
+    ):
         weight = 0.70 if _contains_any(text, ("p=reject", "p=quarantine", "email spoofing risk", "no dmarc")) else 0.55
         return EvidenceQuality(
             evidence_kind="SECURITY_POSTURE",
@@ -296,7 +300,11 @@ def classify_evidence(
             rationale="Email/domain posture signal",
         )
 
-    if EMAIL_RE.search(text) or PHONE_RE.search(text) or _contains_any(text, ("mailto:", "whatsapp", "telegram", "messenger", "contact form", "dm")):
+    if (
+        EMAIL_RE.search(text)
+        or PHONE_RE.search(text)
+        or _contains_any(text, ("mailto:", "whatsapp", "telegram", "messenger", "contact form", "dm"))
+    ):
         return EvidenceQuality(
             evidence_kind="CONTACT_CHANNEL",
             quality_tier="MED",
@@ -305,9 +313,16 @@ def classify_evidence(
             rationale="Official contact channel",
         )
 
-    is_doc = source == "pdf" or ".pdf" in path or "application/pdf" in mime or conn in {"public_docs_pdf", "procurement_documents"}
+    is_doc = (
+        source == "pdf"
+        or ".pdf" in path
+        or "application/pdf" in mime
+        or conn in {"public_docs_pdf", "procurement_documents"}
+    )
     if is_doc:
-        process_text = _contains_any(text, ("submit request", "payment", "billing", "account recovery", "reservation", "booking", "procurement"))
+        process_text = _contains_any(
+            text, ("submit request", "payment", "billing", "account recovery", "reservation", "booking", "procurement")
+        )
         is_proc = _contains_any(text, PROCUREMENT_HINTS) or conn == "procurement_documents"
         if is_proc:
             return EvidenceQuality(
@@ -326,7 +341,9 @@ def classify_evidence(
         )
 
     if conn in {"gdelt_news", "media_trend"} or source == "news" or _contains_any(text, NEWS_HINTS):
-        specific = _contains_any(text, ("staff", "role", "contact", "email", "finance", "it", "dpo", "booking", "payment"))
+        specific = _contains_any(
+            text, ("staff", "role", "contact", "email", "finance", "it", "dpo", "booking", "payment")
+        )
         return EvidenceQuality(
             evidence_kind="NEWS_MENTION",
             quality_tier="MED" if specific else "LOW",

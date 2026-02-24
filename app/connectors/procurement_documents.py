@@ -47,12 +47,16 @@ class ProcurementDocumentsConnector(ConnectorBase):
             return []
 
         with SessionLocal() as db:
-            docs = db.execute(
-                select(Document).where(
-                    Document.assessment_id == target.assessment_id,
-                    Document.doc_type.in_(["html", "pdf"]),
+            docs = (
+                db.execute(
+                    select(Document).where(
+                        Document.assessment_id == target.assessment_id,
+                        Document.doc_type.in_(["html", "pdf"]),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         evidences: list[EvidencePayload] = []
         hit_docs = 0
@@ -98,4 +102,3 @@ class ProcurementDocumentsConnector(ConnectorBase):
         )
 
         return evidences[:80]
-

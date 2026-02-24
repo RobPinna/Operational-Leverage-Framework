@@ -17,4 +17,3 @@ def normalize_target_host(value: str) -> str:
 def canonical_domain_for_api(value: str) -> str:
     """Return host-only domain value for API endpoints and DNS lookups."""
     return normalize_target_host(value)
-

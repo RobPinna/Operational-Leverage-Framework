@@ -58,11 +58,15 @@ def correlations_page(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
 
-    rows = db.execute(
-        select(CrossSignalCorrelation)
-        .where(CrossSignalCorrelation.assessment_id == assessment_id)
-        .order_by(CrossSignalCorrelation.risk_level.desc(), CrossSignalCorrelation.created_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(CrossSignalCorrelation)
+            .where(CrossSignalCorrelation.assessment_id == assessment_id)
+            .order_by(CrossSignalCorrelation.risk_level.desc(), CrossSignalCorrelation.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
 
     evidence_ids: set[int] = set()
     refs_by_corr: dict[int, list[int]] = {}
@@ -118,4 +122,3 @@ def correlations_page(
             "cards": cards,
         },
     )
-

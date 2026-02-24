@@ -175,8 +175,10 @@ def _bucket_key_for_url(url: str, *, connector: str = "", doc_type: str = "") ->
         return "dns"
     if dt == "pdf" or low.endswith(".pdf") or conn in {"public_docs_pdf"}:
         return "pdf"
-    if conn in {"job_postings_live"} or any(tok in low for tok in ["greenhouse.io", "lever.co", "indeed."]) or any(
-        tok in path for tok in ["/careers", "/jobs"]
+    if (
+        conn in {"job_postings_live"}
+        or any(tok in low for tok in ["greenhouse.io", "lever.co", "indeed."])
+        or any(tok in path for tok in ["/careers", "/jobs"])
     ):
         return "jobs"
     if conn in {"gdelt_news", "media_trend"} or any(tok in path for tok in ["/news", "/press"]):
@@ -215,7 +217,9 @@ def _impact_strip_for_risk(*, risk_type: str, severity: int, impact: str = "", t
     operational = 25 + (sev * 10)
     client_trust = 25 + (sev * 10)
 
-    if impact == "financial" or any(k in low for k in ["billing", "invoice", "payment", "refund", "procurement", "supplier"]):
+    if impact == "financial" or any(
+        k in low for k in ["billing", "invoice", "payment", "refund", "procurement", "supplier"]
+    ):
         financial += 35
     if impact == "ops" or any(k in low for k in ["onboarding", "helpdesk", "support", "portal", "account"]):
         operational += 25
@@ -362,10 +366,16 @@ def new_assessment_wizard(
     if assessment:
         evid_count = db.execute(select(Evidence).where(Evidence.assessment_id == assessment.id)).scalars().all()
         finding_count = db.execute(select(Finding).where(Finding.assessment_id == assessment.id)).scalars().all()
-        hypothesis_count = db.execute(select(Hypothesis).where(Hypothesis.assessment_id == assessment.id)).scalars().all()
-        mitigation_count = db.execute(select(Mitigation).where(Mitigation.assessment_id == assessment.id)).scalars().all()
+        hypothesis_count = (
+            db.execute(select(Hypothesis).where(Hypothesis.assessment_id == assessment.id)).scalars().all()
+        )
+        mitigation_count = (
+            db.execute(select(Mitigation).where(Mitigation.assessment_id == assessment.id)).scalars().all()
+        )
         report_count = db.execute(select(Report).where(Report.assessment_id == assessment.id)).scalars().all()
-        exam_count = db.execute(select(ExaminationLog).where(ExaminationLog.assessment_id == assessment.id)).scalars().all()
+        exam_count = (
+            db.execute(select(ExaminationLog).where(ExaminationLog.assessment_id == assessment.id)).scalars().all()
+        )
 
         inferred_step = assessment.wizard_step
         if assessment.status == "collected":
@@ -473,6 +483,7 @@ def assessment_overview(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
     from app.services.risk_story import build_overview_viewmodel
+
     overview = build_overview_viewmodel(
         db,
         assessment,
@@ -583,9 +594,15 @@ def collector_stats_page(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
 
-    rows = db.execute(
-        select(ExaminationLog).where(ExaminationLog.assessment_id == assessment_id).order_by(ExaminationLog.discovered_at.desc())
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(ExaminationLog)
+            .where(ExaminationLog.assessment_id == assessment_id)
+            .order_by(ExaminationLog.discovered_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     documents = db.execute(select(Document).where(Document.assessment_id == assessment_id)).scalars().all()
 
     status_counts: dict[str, int] = {}
@@ -594,7 +611,9 @@ def collector_stats_page(
         status_counts[row.status] = status_counts.get(row.status, 0) + 1
         source_counts[row.source_type] = source_counts.get(row.source_type, 0) + 1
 
-    extracted_chars = [int(r.extracted_chars) for r in rows if r.extracted_chars is not None and int(r.extracted_chars) > 0]
+    extracted_chars = [
+        int(r.extracted_chars) for r in rows if r.extracted_chars is not None and int(r.extracted_chars) > 0
+    ]
     median_chars = int(statistics.median(extracted_chars)) if extracted_chars else 0
     pdf_rows = [r for r in rows if r.source_type == "pdf"]
     parsed_pdf_rows = [r for r in pdf_rows if r.status in {"parsed", "pdf_needs_ocr_candidate"}]
@@ -814,11 +833,14 @@ def wizard_step5(
     # then generate evidence-first scenarios (defensive-only) and refresh mitigation backlog.
     build_rag_index(assessment.id)
     rag_cfg = get_rag_advanced_state(db)
-    plan = run_rag_query_plan(assessment.id, top_k=int(rag_cfg.get("top_k", 4)), min_ratio=float(rag_cfg.get("min_ratio", 0.70)))
+    plan = run_rag_query_plan(
+        assessment.id, top_k=int(rag_cfg.get("top_k", 4)), min_ratio=float(rag_cfg.get("min_ratio", 0.70))
+    )
     generate_hypotheses(assessment.id, plan, allow_local_fallback=True)
     # Process-based trust workflow map (phase 1): derives workflow nodes and trust friction scoring.
     try:
         from app.services.trust_workflows import generate_trust_workflow_map
+
         generate_trust_workflow_map(
             db,
             assessment.id,
@@ -828,6 +850,7 @@ def wizard_step5(
     except Exception:
         # Never break the wizard due to workflow mapping; log in server logs.
         import logging
+
         logging.getLogger(__name__).exception("Trust workflow map generation failed for assessment %s", assessment.id)
     build_mitigations(db, assessment)
     return RedirectResponse(url=f"/assessments/new?assessment_id={assessment.id}", status_code=302)

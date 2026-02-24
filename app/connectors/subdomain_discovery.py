@@ -165,4 +165,3 @@ class SubdomainDiscoveryConnector(ConnectorBase):
             )
 
         return evidences[:40]
-

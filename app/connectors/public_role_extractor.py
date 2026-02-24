@@ -47,7 +47,9 @@ def _looks_like_job(url: str, title: str, text: str) -> bool:
 
 def _looks_like_news(url: str, connector: str) -> bool:
     value = (url or "").lower()
-    return connector in {"gdelt_news", "media_trend"} or any(k in value for k in ("/news", "/press", "/media", "gdeltproject.org"))
+    return connector in {"gdelt_news", "media_trend"} or any(
+        k in value for k in ("/news", "/press", "/media", "gdeltproject.org")
+    )
 
 
 class PublicRoleExtractorConnector(ConnectorBase):
@@ -67,21 +69,27 @@ class PublicRoleExtractorConnector(ConnectorBase):
             return []
 
         with SessionLocal() as db:
-            docs = db.execute(
-                select(Document).where(Document.assessment_id == target.assessment_id)
-            ).scalars().all()
-            news_rows = db.execute(
-                select(Evidence).where(
-                    Evidence.assessment_id == target.assessment_id,
-                    Evidence.connector.in_(["gdelt_news", "media_trend"]),
+            docs = db.execute(select(Document).where(Document.assessment_id == target.assessment_id)).scalars().all()
+            news_rows = (
+                db.execute(
+                    select(Evidence).where(
+                        Evidence.assessment_id == target.assessment_id,
+                        Evidence.connector.in_(["gdelt_news", "media_trend"]),
+                    )
                 )
-            ).scalars().all()
-            job_rows = db.execute(
-                select(Evidence).where(
-                    Evidence.assessment_id == target.assessment_id,
-                    Evidence.connector == "job_postings_live",
+                .scalars()
+                .all()
+            )
+            job_rows = (
+                db.execute(
+                    select(Evidence).where(
+                        Evidence.assessment_id == target.assessment_id,
+                        Evidence.connector == "job_postings_live",
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         if not docs and not news_rows and not job_rows:
             target.log_examination(

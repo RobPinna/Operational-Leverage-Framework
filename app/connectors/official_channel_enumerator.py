@@ -75,12 +75,16 @@ class OfficialChannelEnumeratorConnector(ConnectorBase):
             return []
 
         with SessionLocal() as db:
-            docs = db.execute(
-                select(Document).where(
-                    Document.assessment_id == target.assessment_id,
-                    Document.doc_type == "html",
+            docs = (
+                db.execute(
+                    select(Document).where(
+                        Document.assessment_id == target.assessment_id,
+                        Document.doc_type == "html",
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         if not docs:
             target.log_examination(
@@ -101,18 +105,10 @@ class OfficialChannelEnumeratorConnector(ConnectorBase):
         # Enumerate public channels from homepage-like content.
         url_hits = HTTP_URL_RE.findall(home_text)
         social_links = sorted(
-            {
-                u
-                for u in url_hits
-                if any((_host(u) == h or _host(u).endswith(f".{h}")) for h in SOCIAL_HOSTS)
-            }
+            {u for u in url_hits if any((_host(u) == h or _host(u).endswith(f".{h}")) for h in SOCIAL_HOSTS)}
         )
         dm_links = sorted(
-            {
-                u
-                for u in url_hits
-                if any((_host(u) == h or _host(u).endswith(f".{h}")) for h in DIRECT_MESSAGE_HOSTS)
-            }
+            {u for u in url_hits if any((_host(u) == h or _host(u).endswith(f".{h}")) for h in DIRECT_MESSAGE_HOSTS)}
         )
         dm_links += [
             f"https://{_host(u)}"

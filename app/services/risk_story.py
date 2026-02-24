@@ -53,7 +53,22 @@ def _vendor_cues_from_evidence(evidence: list[dict[str, Any]]) -> list[str]:
         doc_title = " ".join(str(e.get("doc_title", "")).split()).strip()
         url = " ".join(str(e.get("url", "")).split()).strip()
         blob = f"{title} {doc_title} {snippet} {url}".strip()
-        for name in ("Zendesk", "Freshdesk", "Intercom", "Salesforce", "HubSpot", "Stripe", "Adyen", "PayPal", "Cloudflare", "Akamai", "Okta", "Auth0", "reCAPTCHA", "Google Tag Manager"):
+        for name in (
+            "Zendesk",
+            "Freshdesk",
+            "Intercom",
+            "Salesforce",
+            "HubSpot",
+            "Stripe",
+            "Adyen",
+            "PayPal",
+            "Cloudflare",
+            "Akamai",
+            "Okta",
+            "Auth0",
+            "reCAPTCHA",
+            "Google Tag Manager",
+        ):
             if name.lower() in blob.lower():
                 cues.append(name)
     # Also include explicit vendor hits stored in meta (if present).
@@ -253,11 +268,19 @@ def _attack_type_phrase(*, primary_risk_type: str, risk_type: str, process_flags
     if isinstance(process_flags, dict):
         sens = {str(x).upper() for x in (process_flags.get("data_sens_kinds") or []) if str(x).strip()}
 
-    if rt in {"fraud_process"} or any(k in primary for k in ("payment fraud", "booking fraud", "donation fraud")) or "BOOKING_PAYMENT" in sens:
+    if (
+        rt in {"fraud_process"}
+        or any(k in primary for k in ("payment fraud", "booking fraud", "donation fraud"))
+        or "BOOKING_PAYMENT" in sens
+    ):
         return "Fraudulent payment or invoice redirection"
     if rt in {"privacy_data_risk"} or any(k in primary for k in ("data handling", "data subject", "privacy")):
         return "Unauthorized personal data disclosure"
-    if rt in {"credential_theft_risk"} or any(k in primary for k in ("account takeover", "credential")) or "CREDENTIALS" in sens:
+    if (
+        rt in {"credential_theft_risk"}
+        or any(k in primary for k in ("account takeover", "credential"))
+        or "CREDENTIALS" in sens
+    ):
         return "Account takeover via identity verification abuse"
     if rt in {"impersonation", "downstream_pivot", "brand_abuse", "social_trust_surface_exposure"} or any(
         k in primary for k in ("social engineering", "partner impersonation", "channel confusion")
@@ -275,18 +298,28 @@ def _impact_phrase(*, risk_type: str, process_flags: dict | None = None, primary
     if isinstance(process_flags, dict):
         sens = {str(x).upper() for x in (process_flags.get("data_sens_kinds") or []) if str(x).strip()}
 
-    if rt in {"fraud_process"} or any(k in primary for k in ("payment", "invoice", "booking fraud", "donation fraud")) or "BOOKING_PAYMENT" in sens:
+    if (
+        rt in {"fraud_process"}
+        or any(k in primary for k in ("payment", "invoice", "booking fraud", "donation fraud"))
+        or "BOOKING_PAYMENT" in sens
+    ):
         return "fraudulent payments and financial loss"
     if rt in {"privacy_data_risk"} or any(k in primary for k in ("data handling", "privacy")):
         return "data leakage and reputational damage"
-    if rt in {"credential_theft_risk"} or any(k in primary for k in ("account takeover", "credential")) or "CREDENTIALS" in sens:
+    if (
+        rt in {"credential_theft_risk"}
+        or any(k in primary for k in ("account takeover", "credential"))
+        or "CREDENTIALS" in sens
+    ):
         return "account takeover and operational disruption"
     if rt in {"downstream_pivot", "impersonation", "brand_abuse", "social_trust_surface_exposure"}:
         return "fraudulent requests and client trust damage"
     return "operational disruption and reputational damage"
 
 
-def _verdict_line(*, primary_risk_type: str, risk_type: str, conditions: list[str], process_flags: dict | None = None) -> str:
+def _verdict_line(
+    *, primary_risk_type: str, risk_type: str, conditions: list[str], process_flags: dict | None = None
+) -> str:
     """
     Concrete structure:
       Top Risk: [Concrete attack type] leading to [specific impact].
@@ -350,7 +383,9 @@ def _parse_signal_counts_blob(blob: str) -> _ParsedSignalCounts:
             counts[str(k).strip().upper()] = int(v or 0)
         except Exception:
             continue
-    return _ParsedSignalCounts(counts=counts, baseline_exposure=baseline, tags=tags, process_flags=process_flags, extras=extras)
+    return _ParsedSignalCounts(
+        counts=counts, baseline_exposure=baseline, tags=tags, process_flags=process_flags, extras=extras
+    )
 
 
 def _normalize_evidence_refs(
@@ -463,7 +498,7 @@ def _dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for ev in items or []:
-        key = f"{ev.get('canonical_url','')}|{ev.get('signal_type','')}"
+        key = f"{ev.get('canonical_url', '')}|{ev.get('signal_type', '')}"
         if not key.strip("|"):
             continue
         if key in seen:
@@ -519,7 +554,9 @@ def _sensitivity_value(level: str) -> int:
     return 1
 
 
-def _likelihood_from_plausibility(plausibility: int, *, signal_coverage: int, distinct_urls: int, evidence_refs_count: int) -> str:
+def _likelihood_from_plausibility(
+    plausibility: int, *, signal_coverage: int, distinct_urls: int, evidence_refs_count: int
+) -> str:
     p = int(max(0, min(100, plausibility)))
     if p >= 75:
         out = "high"
@@ -635,8 +672,12 @@ def _build_bundles_for_risk(
         )
 
     channel_items = [*by_signal.get("SOCIAL_TRUST_NODE", []), *by_signal.get("CONTACT_CHANNEL", [])]
-    trust_friction = bool((process_flags or {}).get("trust_friction", False)) if isinstance(process_flags, dict) else False
-    if channel_items and ("SOCIAL_TRUST_NODE" in present or (counts or {}).get("CONTACT_CHANNEL", 0) >= 2 or trust_friction):
+    trust_friction = (
+        bool((process_flags or {}).get("trust_friction", False)) if isinstance(process_flags, dict) else False
+    )
+    if channel_items and (
+        "SOCIAL_TRUST_NODE" in present or (counts or {}).get("CONTACT_CHANNEL", 0) >= 2 or trust_friction
+    ):
         bundles.append(
             {
                 "id": "ambiguity",
@@ -781,12 +822,18 @@ def _confirm_deny_points(*, meta: dict, process_flags: dict | None) -> tuple[lis
     if has_booking:
         confirm.append("Booking/billing/payment workflow references appear alongside externally accessible channels.")
     if trust_friction:
-        confirm.append("No clear public official-channel verification or anti-phishing guidance was found in the indexed corpus.")
+        confirm.append(
+            "No clear public official-channel verification or anti-phishing guidance was found in the indexed corpus."
+        )
 
     deny.append("A centralized, signed registry of official contact channels is published and consistently referenced.")
-    deny.append("A clear statement exists and is visible: the organization will never request passwords or login details.")
+    deny.append(
+        "A clear statement exists and is visible: the organization will never request passwords or login details."
+    )
     if has_social and (social_dm_workflow or social_to_booking):
-        deny.append("Clear guidance exists: sensitive actions are never handled via DM; booking/payment changes require verified channels.")
+        deny.append(
+            "Clear guidance exists: sensitive actions are never handled via DM; booking/payment changes require verified channels."
+        )
     if has_social and social_verified:
         deny.append("Verified social accounts are used as trust anchors and consistently linked from official pages.")
     if has_booking or int((counts or {}).get("PROCESS_CUE", 0) or 0) > 0:
@@ -921,7 +968,9 @@ def get_ranked_risks(
             docs_by_id[int(d.id)] = d
     if doc_urls:
         for d in (
-            db.execute(select(Document).where(Document.assessment_id == assessment_id, Document.url.in_(list(doc_urls))))
+            db.execute(
+                select(Document).where(Document.assessment_id == assessment_id, Document.url.in_(list(doc_urls)))
+            )
             .scalars()
             .all()
         ):
@@ -1067,8 +1116,10 @@ def get_ranked_risks(
             u = str(ev.get("url", "")).lower()
             dt = str(ev.get("doc_type", "")).lower()
             t = str(ev.get("title", "")).lower()
-            return ("policy" in dt) or any(k in u for k in ("/privacy", "/policy", "/terms", "/cookie")) or any(
-                k in t for k in ("privacy", "policy", "terms")
+            return (
+                ("policy" in dt)
+                or any(k in u for k in ("/privacy", "/policy", "/terms", "/cookie"))
+                or any(k in t for k in ("privacy", "policy", "terms"))
             )
 
         policy_only_penalty = 1 if evidence_valid and all(_is_policy_like(ev) for ev in evidence_valid) else 0
@@ -1188,7 +1239,10 @@ def get_ranked_risks(
                 "reservation update",
                 "reservation cancellation",
             )
-        ) or bool((pflags.get("data_sens_kinds") or []) and any(str(x).upper() in {"BOOKING_PAYMENT", "CREDENTIALS"} for x in (pflags.get("data_sens_kinds") or [])))
+        ) or bool(
+            (pflags.get("data_sens_kinds") or [])
+            and any(str(x).upper() in {"BOOKING_PAYMENT", "CREDENTIALS"} for x in (pflags.get("data_sens_kinds") or []))
+        )
         if high_impact_workflow and max_sens < 2:
             max_sens = 2
 
@@ -1222,7 +1276,12 @@ def get_ranked_risks(
             (_is_policy_like(ev) or str(ev.get("signal_type", "")).strip().upper() == "CONTACT_CHANNEL")
             for ev in evidence_valid
         )
-        if bool(getattr(h, "baseline_tag", False)) or bool(parsed.baseline_exposure) or (generic_contact_policy_only and len(linked_nodes) == 0) or only_baseline_signals:
+        if (
+            bool(getattr(h, "baseline_tag", False))
+            or bool(parsed.baseline_exposure)
+            or (generic_contact_policy_only and len(linked_nodes) == 0)
+            or only_baseline_signals
+        ):
             status_value = "BASELINE"
         elif (
             plausibility_score >= 55
@@ -1353,7 +1412,9 @@ def get_ranked_risks(
                 }
                 for b in (risk_bundles or [])
             ],
-            "confirm_deny": _confirm_deny_points(meta={"signal_counts": dict(counts or {})}, process_flags=parsed.process_flags),
+            "confirm_deny": _confirm_deny_points(
+                meta={"signal_counts": dict(counts or {})}, process_flags=parsed.process_flags
+            ),
             "meta": {
                 "signal_counts": counts,
                 "evidence_quality": evidence_quality,
@@ -1517,7 +1578,10 @@ def build_overview_viewmodel(
     elevated = list(by_status.get("ELEVATED") or [])
     watchlist = list(by_status.get("WATCHLIST") or [])
     baseline = list(by_status.get("BASELINE") or [])
-    status_counts = dict(ranked.get("status_counts") or {"ELEVATED": len(elevated), "WATCHLIST": len(watchlist), "BASELINE": len(baseline)})
+    status_counts = dict(
+        ranked.get("status_counts")
+        or {"ELEVATED": len(elevated), "WATCHLIST": len(watchlist), "BASELINE": len(baseline)}
+    )
     risk_summaries = list(ranked.get("all_ranked") or (elevated + watchlist + baseline))
     watchlist_preview_limit = 3
     watchlist_full = get_risks_by_status(
@@ -1666,7 +1730,9 @@ def build_overview_viewmodel(
     confirm_points: list[str] = []
     deny_points: list[str] = []
     try:
-        confirm_points, deny_points = _confirm_deny_points(meta={"signal_counts": dict(top_counts)}, process_flags=top_process_flags)
+        confirm_points, deny_points = _confirm_deny_points(
+            meta={"signal_counts": dict(top_counts)}, process_flags=top_process_flags
+        )
     except Exception:
         confirm_points, deny_points = [], []
 
@@ -1764,13 +1830,20 @@ def build_overview_viewmodel(
         {
             "id": "impact:primary",
             "title": "Primary impact",
-            "detail": _first_sentence(str(top_row.impact_rationale if top_row else top.get("why_matters", "")), max_chars=160),
+            "detail": _first_sentence(
+                str(top_row.impact_rationale if top_row else top.get("why_matters", "")), max_chars=160
+            ),
             "icon": "target",
             "evidence_set_id": f"risk:{top_id}",
             "log_q": _domain_for_url(str((top_ev_valid or [{}])[0].get("url", ""))),
         }
     ]
-    if str(top.get("risk_type", "")).strip().lower() in {"downstream_pivot", "impersonation", "brand_abuse", "social_trust_surface_exposure"}:
+    if str(top.get("risk_type", "")).strip().lower() in {
+        "downstream_pivot",
+        "impersonation",
+        "brand_abuse",
+        "social_trust_surface_exposure",
+    }:
         impact_cards.append(
             {
                 "id": "impact:trust",
@@ -1901,9 +1974,14 @@ def build_overview_viewmodel(
     exec_brief = ""
     if generate_brief and top_row:
         try:
-            prt = str(getattr(top_row, "primary_risk_type", "") or "").strip() or str(topRiskVerdict.get("primary_risk_type", "") or "").strip()
+            prt = (
+                str(getattr(top_row, "primary_risk_type", "") or "").strip()
+                or str(topRiskVerdict.get("primary_risk_type", "") or "").strip()
+            )
             vector = str(getattr(top_row, "risk_vector_summary", "") or "").strip()
-            conditions = [str(b.get("title", "")).strip() for b in recipe_bundles if str(b.get("title", "")).strip()][:3]
+            conditions = [str(b.get("title", "")).strip() for b in recipe_bundles if str(b.get("title", "")).strip()][
+                :3
+            ]
             brief_inp = BriefInput(
                 assessment_id=assessment_id,
                 risk_kind="scenario",
@@ -1913,11 +1991,24 @@ def build_overview_viewmodel(
                 primary_risk_type=prt,
                 risk_vector_summary=vector,
                 conditions=conditions,
-                signal_bundles=[{"title": str(b.get("title", "")), "item_count": int(b.get("item_count", 0) or 0)} for b in (bundles or [])[:8]],
-                workflow_nodes=[{"title": str(n.title or ""), "channel": str(n.channel_type or ""), "sensitivity": str(n.sensitivity_level or ""), "trust_friction": int(n.trust_friction_score or 0)} for n in linked_workflows[:6]],
+                signal_bundles=[
+                    {"title": str(b.get("title", "")), "item_count": int(b.get("item_count", 0) or 0)}
+                    for b in (bundles or [])[:8]
+                ],
+                workflow_nodes=[
+                    {
+                        "title": str(n.title or ""),
+                        "channel": str(n.channel_type or ""),
+                        "sensitivity": str(n.sensitivity_level or ""),
+                        "trust_friction": int(n.trust_friction_score or 0),
+                    }
+                    for n in linked_workflows[:6]
+                ],
                 vendor_cues=_vendor_cues_from_evidence(list(evidence_sets.get(f"risk:{top_id}", []))),
                 channel_cues=_channel_cues_from_evidence(list(evidence_sets.get(f"risk:{top_id}", []))),
-                impact_targets=_impact_targets_from_band(str(top.get("impact_band", "MED")), str(top.get("risk_type", ""))),
+                impact_targets=_impact_targets_from_band(
+                    str(top.get("impact_band", "MED")), str(top.get("risk_type", ""))
+                ),
                 severity=int(top_row.severity or 3),
                 likelihood_badge=str(top.get("likelihood", "med")).upper(),
                 confidence=int(top.get("confidence", 0) or 0),
@@ -2032,7 +2123,14 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
 
     row = db.get(Hypothesis, rid)
     if not row or int(row.assessment_id) != assessment_id:
-        return {"assessment_id": assessment_id, "risk": None, "evidenceSets": {}, "recipe_bundles": [], "bundles": [], "details": {}}
+        return {
+            "assessment_id": assessment_id,
+            "risk": None,
+            "evidenceSets": {},
+            "recipe_bundles": [],
+            "bundles": [],
+            "details": {},
+        }
 
     # Prefetch documents referenced by this risk and by workflow nodes.
     refs = from_json(row.evidence_refs_json or "[]", [])
@@ -2057,7 +2155,9 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
             docs_by_id[int(d.id)] = d
     if doc_urls:
         for d in (
-            db.execute(select(Document).where(Document.assessment_id == assessment_id, Document.url.in_(list(doc_urls))))
+            db.execute(
+                select(Document).where(Document.assessment_id == assessment_id, Document.url.in_(list(doc_urls)))
+            )
             .scalars()
             .all()
         ):
@@ -2065,11 +2165,15 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
 
     evidence_sets: dict[str, list[dict[str, Any]]] = {}
     parsed = _parse_signal_counts_blob(row.signal_counts_json or "{}")
-    evidence_all = _normalize_evidence_refs(refs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id=str(row.query_id or "")[:16])
+    evidence_all = _normalize_evidence_refs(
+        refs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id=str(row.query_id or "")[:16]
+    )
     evidence_valid = [
         ev
         for ev in evidence_all
-        if isinstance(ev, dict) and (not bool(ev.get("is_boilerplate", False))) and float(ev.get("weight", 1.0) or 1.0) >= 0.5
+        if isinstance(ev, dict)
+        and (not bool(ev.get("is_boilerplate", False)))
+        and float(ev.get("weight", 1.0) or 1.0) >= 0.5
     ]
     evidence_sets[f"risk:{rid}"] = _dedupe_evidence(evidence_valid)[:18]
 
@@ -2091,12 +2195,16 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         for x in evidence_all
         if isinstance(x, dict)
     ]
-    calc_conf, meta = compute_hypothesis_confidence(ev_items, base_avg=base_avg, sector=str(assessment.sector or ""), risk_type=str(row.risk_type or ""))
+    calc_conf, meta = compute_hypothesis_confidence(
+        ev_items, base_avg=base_avg, sector=str(assessment.sector or ""), risk_type=str(row.risk_type or "")
+    )
     conf = int(row.confidence or 0) or int(calc_conf)
     counts = meta.get("signal_counts") if isinstance(meta.get("signal_counts"), dict) else {}
     if not counts and parsed.counts:
         counts = dict(parsed.counts)
-    diversity = int(meta.get("signal_diversity_count", 0) or len([k for k, v in (counts or {}).items() if int(v or 0) > 0]))
+    diversity = int(
+        meta.get("signal_diversity_count", 0) or len([k for k, v in (counts or {}).items() if int(v or 0) > 0])
+    )
     meta["signal_counts"] = counts or {}
     meta["signal_diversity_count"] = diversity
     coverage = coverage_label_from_signals(meta)
@@ -2108,7 +2216,9 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     impact_band = _impact_band_from_severity(int(row.severity or 3))
     likelihood = (str(row.likelihood or "med").strip().lower() or "med")[:8]
     primary_risk_type = str(getattr(row, "primary_risk_type", "") or "").strip()
-    outcome = _risk_outcome_label(str(row.risk_type or ""), sector=str(assessment.sector or ""), process_flags=parsed.process_flags)
+    outcome = _risk_outcome_label(
+        str(row.risk_type or ""), sector=str(assessment.sector or ""), process_flags=parsed.process_flags
+    )
     title = _risk_display_name(primary_risk_type=primary_risk_type, fallback_outcome=outcome)
     if not primary_risk_type:
         primary_risk_type = title
@@ -2120,10 +2230,14 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         timeline = timeline_for_risk(str(row.risk_type or ""), meta)
 
     # Bundles (recipe)
-    bundles = _build_bundles_for_risk(evidence_valid=evidence_sets.get(f"risk:{rid}", []), counts=counts or {}, process_flags=parsed.process_flags)
+    bundles = _build_bundles_for_risk(
+        evidence_valid=evidence_sets.get(f"risk:{rid}", []), counts=counts or {}, process_flags=parsed.process_flags
+    )
     recipe_bundles = _pick_recipe_bundles(bundles)
     ingredient_phrases = [str(b.get("title", "")).strip() for b in recipe_bundles if str(b.get("title", "")).strip()]
-    if primary_risk_type and (not risk_vector_summary or not _verdict_matches_bundles(risk_vector_summary, ingredient_phrases)):
+    if primary_risk_type and (
+        not risk_vector_summary or not _verdict_matches_bundles(risk_vector_summary, ingredient_phrases)
+    ):
         risk_vector_summary = _verdict_line(
             primary_risk_type=primary_risk_type,
             risk_type=str(row.risk_type or ""),
@@ -2136,7 +2250,9 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     confirm_points: list[str] = []
     deny_points: list[str] = []
     try:
-        confirm_points, deny_points = _confirm_deny_points(meta={"signal_counts": dict(counts or {})}, process_flags=parsed.process_flags)
+        confirm_points, deny_points = _confirm_deny_points(
+            meta={"signal_counts": dict(counts or {})}, process_flags=parsed.process_flags
+        )
     except Exception:
         confirm_points, deny_points = [], []
 
@@ -2151,7 +2267,11 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         .all()
     )
     linked_workflows: list[WorkflowNode] = []
-    top_urls = {str(ev.get("canonical_url", "")) for ev in (evidence_sets.get(f"risk:{rid}", []) or []) if str(ev.get("canonical_url", ""))}
+    top_urls = {
+        str(ev.get("canonical_url", ""))
+        for ev in (evidence_sets.get(f"risk:{rid}", []) or [])
+        if str(ev.get("canonical_url", ""))
+    }
     if top_urls:
         for n in workflow_nodes:
             if len(linked_workflows) >= 8:
@@ -2174,7 +2294,9 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         norm_valid = [
             ev
             for ev in norm
-            if isinstance(ev, dict) and (not bool(ev.get("is_boilerplate", False))) and float(ev.get("weight", 1.0) or 1.0) >= 0.5
+            if isinstance(ev, dict)
+            and (not bool(ev.get("is_boilerplate", False)))
+            and float(ev.get("weight", 1.0) or 1.0) >= 0.5
         ]
         evidence_sets[f"workflow:{n.id}"] = _dedupe_evidence(norm_valid)[:12]
 
@@ -2191,8 +2313,19 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
             primary_risk_type=primary_risk_type,
             risk_vector_summary=risk_vector_summary,
             conditions=conditions,
-            signal_bundles=[{"title": str(b.get("title", "")), "item_count": int(b.get("item_count", 0) or 0)} for b in (bundles or [])[:8]],
-            workflow_nodes=[{"title": str(n.title or ""), "channel": str(n.channel_type or ""), "sensitivity": str(n.sensitivity_level or ""), "trust_friction": int(n.trust_friction_score or 0)} for n in linked_workflows[:6]],
+            signal_bundles=[
+                {"title": str(b.get("title", "")), "item_count": int(b.get("item_count", 0) or 0)}
+                for b in (bundles or [])[:8]
+            ],
+            workflow_nodes=[
+                {
+                    "title": str(n.title or ""),
+                    "channel": str(n.channel_type or ""),
+                    "sensitivity": str(n.sensitivity_level or ""),
+                    "trust_friction": int(n.trust_friction_score or 0),
+                }
+                for n in linked_workflows[:6]
+            ],
             vendor_cues=_vendor_cues_from_evidence(list(evidence_sets.get(f"risk:{rid}", []))),
             channel_cues=_channel_cues_from_evidence(list(evidence_sets.get(f"risk:{rid}", []))),
             impact_targets=_impact_targets_from_band(str(impact_band), str(row.risk_type or "")),
@@ -2233,7 +2366,9 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     mitre_chips: list[str] = []
     if rt_low in {"impersonation", "brand_abuse", "downstream_pivot", "social_trust_surface_exposure"}:
         campaign_chips.append("Impersonation opportunity")
-        mitre_chips.extend(["T1589 Identity Information", "T1591 Victim Org Information", "T1593 Search Open Websites/Domains"])
+        mitre_chips.extend(
+            ["T1589 Identity Information", "T1591 Victim Org Information", "T1593 Search Open Websites/Domains"]
+        )
     if int((counts or {}).get("VENDOR_CUE", 0) or 0) > 0:
         campaign_chips.append("Third-party dependency")
     if int((counts or {}).get("PROCESS_CUE", 0) or 0) > 0:

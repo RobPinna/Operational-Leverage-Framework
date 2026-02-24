@@ -9,12 +9,7 @@ from app.security import hash_password
 def ensure_default_admin(db: Session) -> None:
     settings = get_settings()
     user = (
-        db.execute(
-            select(User)
-            .where(User.username == settings.default_admin_user)
-            .order_by(User.id.desc())
-            .limit(1)
-        )
+        db.execute(select(User).where(User.username == settings.default_admin_user).order_by(User.id.desc()).limit(1))
         .scalars()
         .first()
     )

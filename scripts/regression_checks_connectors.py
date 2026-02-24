@@ -91,9 +91,9 @@ def main() -> None:
         assert "email_posture_analyzer" not in names, "Disabled connector must not write evidence."
         assert "dns_footprint" in names, "Enabled connector should still run."
 
-        hypothesis_count = db.execute(
-            select(Hypothesis).where(Hypothesis.assessment_id == assessment.id)
-        ).scalars().all()
+        hypothesis_count = (
+            db.execute(select(Hypothesis).where(Hypothesis.assessment_id == assessment.id)).scalars().all()
+        )
         assert len(hypothesis_count) == 0, "Collection stage must not modify risk engine outputs directly."
 
     print("regression_checks_connectors: OK")

@@ -47,7 +47,11 @@ def reports_page(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
 
-    reports = db.execute(select(Report).where(Report.assessment_id == assessment_id).order_by(Report.created_at.desc())).scalars().all()
+    reports = (
+        db.execute(select(Report).where(Report.assessment_id == assessment_id).order_by(Report.created_at.desc()))
+        .scalars()
+        .all()
+    )
 
     return request.app.state.templates.TemplateResponse(
         "reports.html",

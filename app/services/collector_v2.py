@@ -271,7 +271,9 @@ class _CollectorV2:
         self.db.add(row)
         self.db.commit()
 
-    def _log_external_once(self, url: str, discovered_from: str, parse_summary: str = "external link not fetched") -> None:
+    def _log_external_once(
+        self, url: str, discovered_from: str, parse_summary: str = "external link not fetched"
+    ) -> None:
         key = f"{url}|{discovered_from}|{parse_summary}"
         if key in self._logged_external:
             return
@@ -394,7 +396,9 @@ class _CollectorV2:
         if self._is_pdf_url(url):
             return True
         low = f"{url} {anchor_text}".lower()
-        return any(token in low for token in [" pdf", "download", "brochure", "report", "document", "whitepaper", "policy"])
+        return any(
+            token in low for token in [" pdf", "download", "brochure", "report", "document", "whitepaper", "policy"]
+        )
 
     def _tokenize(self, text: str) -> list[str]:
         return [tok.lower() for tok in TOKEN_RE.findall((text or "").lower())]
@@ -426,7 +430,9 @@ class _CollectorV2:
             score += 2
         return score
 
-    def _add_candidate(self, candidates: dict[str, DiscoveryCandidate], url: str, discovered_from: str, anchor_text: str) -> None:
+    def _add_candidate(
+        self, candidates: dict[str, DiscoveryCandidate], url: str, discovered_from: str, anchor_text: str
+    ) -> None:
         if not url:
             return
         score = self._relevance_score(url, anchor_text, discovered_from)
@@ -485,7 +491,9 @@ class _CollectorV2:
 
         try:
             self.limiter.wait()
-            with requests.get(url, timeout=self.timeout, headers=self.headers, allow_redirects=True, stream=True) as res:
+            with requests.get(
+                url, timeout=self.timeout, headers=self.headers, allow_redirects=True, stream=True
+            ) as res:
                 chunks: list[bytes] = []
                 byte_count = 0
                 for chunk in res.iter_content(8192):
@@ -710,14 +718,19 @@ class _CollectorV2:
         language: str,
         content_hash: str,
     ) -> Document:
-        existing = self.db.execute(
-            select(Document).where(
-                Document.assessment_id == self.assessment.id,
-                Document.url == url,
+        existing = (
+            self.db.execute(
+                select(Document)
+                .where(
+                    Document.assessment_id == self.assessment.id,
+                    Document.url == url,
+                )
+                .order_by(Document.created_at.desc(), Document.id.desc())
+                .limit(1)
             )
-            .order_by(Document.created_at.desc(), Document.id.desc())
-            .limit(1)
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
         if existing:
             existing.doc_type = doc_type
@@ -801,7 +814,9 @@ class _CollectorV2:
                     sitemap_queue.append(normalized)
                     continue
                 if not self._is_allowed_host(normalized):
-                    self._log_external_once(normalized, discovered_from="discovery/sitemap", parse_summary="sitemap external url")
+                    self._log_external_once(
+                        normalized, discovered_from="discovery/sitemap", parse_summary="sitemap external url"
+                    )
                     continue
                 self._add_candidate(candidates, normalized, "sitemap", "sitemap")
                 discovered_count += 1
@@ -822,7 +837,9 @@ class _CollectorV2:
             return []
 
         if not self._is_allowed_host(result.final_url):
-            self._log_external_once(result.final_url, discovered_from="discovery/homepage", parse_summary="homepage redirected external")
+            self._log_external_once(
+                result.final_url, discovered_from="discovery/homepage", parse_summary="homepage redirected external"
+            )
             return []
 
         content_type = (result.content_type or "").lower()
@@ -932,7 +949,9 @@ class _CollectorV2:
             )
             return
 
-        title, extracted_text, language, pdf_pages, pdf_text_chars = self._build_pdf_document_payload(result.final_url, result.content)
+        title, extracted_text, language, pdf_pages, pdf_text_chars = self._build_pdf_document_payload(
+            result.final_url, result.content
+        )
         status = "parsed" if pdf_text_chars >= 200 else "pdf_needs_ocr_candidate"
         self._upsert_document(
             url=result.final_url,
@@ -998,7 +1017,7 @@ class _CollectorV2:
     def _json_unescape(self, raw: str) -> str:
         value = raw or ""
         try:
-            return json.loads(f"\"{value}\"")
+            return json.loads(f'"{value}"')
         except Exception:
             return value.replace("\\\\n", "\\n").replace("\\\\t", "\\t").strip()
 
@@ -1017,22 +1036,22 @@ class _CollectorV2:
         # Platform-specific best-effort parsing (public HTML only, no login).
         if platform == "instagram":
             full_name = ""
-            m = re.search(r'\"full_name\"\\s*:\\s*\"([^\"]*)\"', raw_html)
+            m = re.search(r"\"full_name\"\\s*:\\s*\"([^\"]*)\"", raw_html)
             if m:
                 full_name = self._json_unescape(m.group(1))
-            m = re.search(r'\"biography\"\\s*:\\s*\"([^\"]*)\"', raw_html)
+            m = re.search(r"\"biography\"\\s*:\\s*\"([^\"]*)\"", raw_html)
             if m:
                 bio_text = self._json_unescape(m.group(1))
-            m = re.search(r'\"is_verified\"\\s*:\\s*(true|false)', raw_html, re.IGNORECASE)
+            m = re.search(r"\"is_verified\"\\s*:\\s*(true|false)", raw_html, re.IGNORECASE)
             if m:
                 verified = True if m.group(1).lower() == "true" else False
-            m = re.search(r'\"edge_followed_by\"\\s*:\\s*\\{\\s*\"count\"\\s*:\\s*(\\d+)', raw_html)
+            m = re.search(r"\"edge_followed_by\"\\s*:\\s*\\{\\s*\"count\"\\s*:\\s*(\\d+)", raw_html)
             if m and (m.group(1) or "").isdigit():
                 follower_count = int(m.group(1))
-            m = re.search(r'\"external_url\"\\s*:\\s*\"([^\"]*)\"', raw_html)
+            m = re.search(r"\"external_url\"\\s*:\\s*\"([^\"]*)\"", raw_html)
             if m:
                 link_in_bio = self._json_unescape(m.group(1))
-            m = re.search(r'\"category_name\"\\s*:\\s*\"([^\"]*)\"', raw_html)
+            m = re.search(r"\"category_name\"\\s*:\\s*\"([^\"]*)\"", raw_html)
             if m:
                 business_category = self._json_unescape(m.group(1))
             profile_name = (full_name or og_title or "").strip()
@@ -1188,7 +1207,8 @@ class _CollectorV2:
         if origin_url.startswith("http"):
             doc = (
                 self.db.execute(
-                    select(Document).where(
+                    select(Document)
+                    .where(
                         Document.assessment_id == self.assessment.id,
                         Document.url == origin_url,
                     )
@@ -1292,7 +1312,9 @@ class _CollectorV2:
         has_email = bool(EMAIL_RE.search(bio_text or ""))
         has_phone = bool(PHONE_RE.search(bio_text or ""))
         low_bio = (bio_text or "").lower()
-        mentions_booking = any(k in low_bio for k in SOCIAL_BOOKING_HINTS) or any(k in (link_in_bio or "").lower() for k in SOCIAL_BOOKING_HINTS)
+        mentions_booking = any(k in low_bio for k in SOCIAL_BOOKING_HINTS) or any(
+            k in (link_in_bio or "").lower() for k in SOCIAL_BOOKING_HINTS
+        )
         mentions_dm = any(k in low_bio for k in SOCIAL_DM_HINTS)
 
         signals: list[str] = []
@@ -1417,7 +1439,9 @@ class _CollectorV2:
             return
 
         if not self._is_allowed_host(result.final_url):
-            self._log_external_once(result.final_url, discovered_from=discovered_from, parse_summary="redirected external")
+            self._log_external_once(
+                result.final_url, discovered_from=discovered_from, parse_summary="redirected external"
+            )
             return
 
         content_type = (result.content_type or "").lower()
@@ -1439,7 +1463,9 @@ class _CollectorV2:
             return
 
         raw_html = result.content.decode("utf-8", errors="ignore")
-        title, extracted_text, language, extracted_chars, links = self._build_html_document_payload(result.final_url, raw_html)
+        title, extracted_text, language, extracted_chars, links = self._build_html_document_payload(
+            result.final_url, raw_html
+        )
         was_rendered = False
         render_note = ""
         if (extracted_chars < 800 or not title.strip()) and self.render_budget > 0:

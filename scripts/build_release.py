@@ -49,12 +49,11 @@ def _ensure_runtime_modules() -> None:
     missing = [name for name in REQUIRED_RUNTIME_MODULES if importlib.util.find_spec(name) is None]
     if missing:
         print(
-            "error: missing runtime dependencies in current Python environment: "
-            + ", ".join(missing),
+            "error: missing runtime dependencies in current Python environment: " + ", ".join(missing),
             file=sys.stderr,
         )
         print(
-            "hint: run `python -m pip install -e \".[dev]\"` (or install requirements.txt) before building.",
+            'hint: run `python -m pip install -e ".[dev]"` (or install requirements.txt) before building.',
             file=sys.stderr,
         )
         raise SystemExit(1)

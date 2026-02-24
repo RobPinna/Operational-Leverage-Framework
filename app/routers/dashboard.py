@@ -66,9 +66,7 @@ def dashboard(
         evidence_ids.update(refs)
 
     evidence_rows = (
-        db.execute(select(Evidence).where(Evidence.id.in_(list(evidence_ids)))).scalars().all()
-        if evidence_ids
-        else []
+        db.execute(select(Evidence).where(Evidence.id.in_(list(evidence_ids)))).scalars().all() if evidence_ids else []
     )
     evidence_map = {e.id: e for e in evidence_rows}
     finding_previews: dict[int, dict] = {}
@@ -95,9 +93,13 @@ def dashboard(
 
     map_points = []
     if latest:
-        nodes = db.execute(
-            select(Node).where(Node.assessment_id == latest.id, Node.type.in_(["mention", "touchpoint", "pivot"]))
-        ).scalars().all()
+        nodes = (
+            db.execute(
+                select(Node).where(Node.assessment_id == latest.id, Node.type.in_(["mention", "touchpoint", "pivot"]))
+            )
+            .scalars()
+            .all()
+        )
         base_coords = [(24.7136, 46.6753), (25.2048, 55.2708), (30.0444, 31.2357), (51.5072, -0.1276)]
         for idx, node in enumerate(nodes[:15]):
             lat, lon = base_coords[idx % len(base_coords)]
@@ -132,4 +134,3 @@ def dashboard(
 @router.get("/demo")
 def demo_redirect():
     return RedirectResponse(url="/assessments", status_code=302)
-

@@ -68,12 +68,16 @@ class JobPostingsLiveConnector(ConnectorBase):
         if not target.assessment_id:
             return []
         with SessionLocal() as db:
-            docs = db.execute(
-                select(Document).where(
-                    Document.assessment_id == target.assessment_id,
-                    Document.doc_type == "html",
+            docs = (
+                db.execute(
+                    select(Document).where(
+                        Document.assessment_id == target.assessment_id,
+                        Document.doc_type == "html",
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         rows: list[EvidencePayload] = []
         seen: set[str] = set()
         for doc in docs:

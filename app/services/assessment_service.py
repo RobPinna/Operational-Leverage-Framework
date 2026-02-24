@@ -146,10 +146,7 @@ def log_examination_event(
 
 
 def list_connector_states(db: Session) -> list[dict]:
-    settings = {
-        item.name: item
-        for item in db.execute(select(ConnectorSetting)).scalars().all()
-    }
+    settings = {item.name: item for item in db.execute(select(ConnectorSetting)).scalars().all()}
     data = []
     for connector in connector_registry():
         row = settings.get(connector.name)
@@ -182,7 +179,11 @@ def get_connector_setting(db: Session, name: str) -> ConnectorSetting | None:
 
 def save_connector_setting(db: Session, name: str, enabled: bool, api_key: str | None = None) -> None:
     # Dedupe any legacy duplicates first.
-    rows = db.execute(select(ConnectorSetting).where(ConnectorSetting.name == name).order_by(ConnectorSetting.id.desc())).scalars().all()
+    rows = (
+        db.execute(select(ConnectorSetting).where(ConnectorSetting.name == name).order_by(ConnectorSetting.id.desc()))
+        .scalars()
+        .all()
+    )
     row = rows[0] if rows else None
     if rows and len(rows) > 1:
         for extra in rows[1:]:
@@ -256,7 +257,9 @@ def get_llm_runtime_config(db: Session) -> dict:
     if not model_row:
         return {
             "model": "gpt-4.1",
-            "api_key": deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else None,
+            "api_key": deobfuscate_secret(api_row.api_key_obfuscated)
+            if (api_row and api_row.api_key_obfuscated)
+            else None,
         }
     decoded_model = deobfuscate_secret(model_row.api_key_obfuscated) if model_row.api_key_obfuscated else None
     model = decoded_model if decoded_model in LLM_MODEL_OPTIONS else "gpt-4.1"
@@ -367,7 +370,9 @@ def run_collection(db: Session, assessment: Assessment) -> list[str]:
         )
         try:
             rag_meta = build_rag_index(assessment.id)
-            logs.append(f"rag_index: documents={rag_meta.get('num_documents', 0)} passages={rag_meta.get('num_passages', 0)}")
+            logs.append(
+                f"rag_index: documents={rag_meta.get('num_documents', 0)} passages={rag_meta.get('num_passages', 0)}"
+            )
             log_examination_event(
                 db,
                 assessment.id,
@@ -544,7 +549,9 @@ def _build_findings_from_evidence(assessment: Assessment, evidences: list[Eviden
             continue
 
         evidence_count = len(items)
-        has_critical_touchpoint = any("billing" in ev.snippet.lower() or "support" in ev.snippet.lower() for ev in items)
+        has_critical_touchpoint = any(
+            "billing" in ev.snippet.lower() or "support" in ev.snippet.lower() for ev in items
+        )
         downstream = ftype == "pivot" or any("imperson" in ev.snippet.lower() for ev in items)
         sev = finding_severity(ftype, evidence_count, has_critical_touchpoint, downstream)
         conf = int(sum(i.confidence for i in items) / evidence_count)
@@ -606,9 +613,11 @@ def _build_findings_from_evidence(assessment: Assessment, evidences: list[Eviden
 
 
 def build_model(db: Session, assessment: Assessment) -> dict:
-    evidences = db.execute(
-        select(Evidence).where(Evidence.assessment_id == assessment.id).order_by(Evidence.confidence.desc())
-    ).scalars().all()
+    evidences = (
+        db.execute(select(Evidence).where(Evidence.assessment_id == assessment.id).order_by(Evidence.confidence.desc()))
+        .scalars()
+        .all()
+    )
 
     db.execute(delete(Node).where(Node.assessment_id == assessment.id))
     db.execute(delete(Edge).where(Edge.assessment_id == assessment.id))
@@ -647,9 +656,11 @@ def build_model(db: Session, assessment: Assessment) -> dict:
 
 
 def build_mitigations(db: Session, assessment: Assessment) -> int:
-    findings = db.execute(
-        select(Finding).where(Finding.assessment_id == assessment.id).order_by(Finding.severity.desc())
-    ).scalars().all()
+    findings = (
+        db.execute(select(Finding).where(Finding.assessment_id == assessment.id).order_by(Finding.severity.desc()))
+        .scalars()
+        .all()
+    )
 
     db.execute(delete(Mitigation).where(Mitigation.assessment_id == assessment.id))
     db.commit()
@@ -724,9 +735,11 @@ def export_report(db: Session, assessment: Assessment) -> Report:
     evidences = db.execute(select(Evidence).where(Evidence.assessment_id == assessment.id)).scalars().all()
     findings = db.execute(select(Finding).where(Finding.assessment_id == assessment.id)).scalars().all()
     mitigations = db.execute(select(Mitigation).where(Mitigation.assessment_id == assessment.id)).scalars().all()
-    correlations = db.execute(
-        select(CrossSignalCorrelation).where(CrossSignalCorrelation.assessment_id == assessment.id)
-    ).scalars().all()
+    correlations = (
+        db.execute(select(CrossSignalCorrelation).where(CrossSignalCorrelation.assessment_id == assessment.id))
+        .scalars()
+        .all()
+    )
 
     pdf_path = render_assessment_pdf(assessment, evidences, findings, mitigations)
 
@@ -1035,11 +1048,13 @@ def create_demo_scenario(db: Session, scenario_name: str) -> Assessment:
             )
 
     # Add narrative and pivot evidence for richer downstream risk context.
-    evidences.extend(generate_demo_evidence(
-        company_name=scenario_name,
-        domain=meta["domain"],
-        seed=meta["seed"],
-    ))
+    evidences.extend(
+        generate_demo_evidence(
+            company_name=scenario_name,
+            domain=meta["domain"],
+            seed=meta["seed"],
+        )
+    )
 
     # Dedupe by connector/category/title/url to keep consistency.
     deduped: list[EvidencePayload] = []
@@ -1111,4 +1126,3 @@ def create_demo_scenario(db: Session, scenario_name: str) -> Assessment:
     export_report(db, assessment)
     db.refresh(assessment)
     return assessment
-

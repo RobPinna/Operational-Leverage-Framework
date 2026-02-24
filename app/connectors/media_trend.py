@@ -39,12 +39,16 @@ class MediaTrendConnector(ConnectorBase):
             return []
 
         with SessionLocal() as db:
-            rows = db.execute(
-                select(Evidence).where(
-                    Evidence.assessment_id == target.assessment_id,
-                    Evidence.connector.in_(["gdelt_news", "social_mock"]),
+            rows = (
+                db.execute(
+                    select(Evidence).where(
+                        Evidence.assessment_id == target.assessment_id,
+                        Evidence.connector.in_(["gdelt_news", "social_mock"]),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         if not rows:
             target.log_examination(
@@ -137,4 +141,3 @@ class MediaTrendConnector(ConnectorBase):
             fetched_at=datetime.utcnow(),
         )
         return evidences
-

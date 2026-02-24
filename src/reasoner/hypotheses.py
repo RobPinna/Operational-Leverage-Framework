@@ -20,7 +20,7 @@ from app.models import Assessment, ConnectorSetting, Document, Gap, Hypothesis
 from app.security import deobfuscate_secret
 from app.utils.jsonx import to_json
 from app.services.evidence_quality_classifier import classify_evidence
-from app.services.signal_model import (
+from operational_leverage_framework.scoring.signal_model import (
     SIGNAL_LABELS,
     VENDOR_KEYWORDS,
     compute_hypothesis_confidence,
@@ -162,7 +162,7 @@ def _post_llm_with_backoff(
             retry_after = _retry_after_seconds(res.headers)
             backoff = min(
                 LLM_BACKOFF_MAX_SECONDS,
-                (LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
+                (LLM_BACKOFF_BASE_SECONDS * (2**attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
             )
             wait_seconds = max(retry_after, backoff)
             logger.warning(
@@ -181,7 +181,7 @@ def _post_llm_with_backoff(
                 return last_response
             backoff = min(
                 LLM_BACKOFF_MAX_SECONDS,
-                (LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
+                (LLM_BACKOFF_BASE_SECONDS * (2**attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
             )
             logger.warning(
                 "%s LLM transport error attempt=%s/%s wait=%.2fs err=%s",
@@ -264,14 +264,41 @@ def _workflow_flags_from_evidence(evidence_refs: list[EvidenceRef], *, sector: s
     text = _norm_text(" ".join([f"{r.title} {r.snippet} {r.url}" for r in valid[:12]]))
     sector_norm = (sector or "").strip().lower()
     flags = {
-        "payment": any(x in text for x in ("payment", "billing", "invoice", "refund", "wire", "fattura", "pagamento", "rimborso")),
-        "booking": any(x in text for x in ("booking", "reservation", "reservation change", "modify booking", "prenot", "cambio prenot")),
-        "donation": any(x in text for x in ("donation", "donate", "beneficiary", "fundraising", "gift aid", "donazione", "donare")),
-        "account": any(x in text for x in ("password", "login", "credentials", "account", "otp", "reset", "credenzial", "accesso")),
-        "partner": any(x in text for x in ("partner", "supplier", "vendor", "provider", "procurement", "tender", "supplier", "fornit", "bando")),
-        "press": any(x in text for x in ("press", "media", "newsroom", "press office", "comms", "communications", "stampa")),
+        "payment": any(
+            x in text for x in ("payment", "billing", "invoice", "refund", "wire", "fattura", "pagamento", "rimborso")
+        ),
+        "booking": any(
+            x in text
+            for x in ("booking", "reservation", "reservation change", "modify booking", "prenot", "cambio prenot")
+        ),
+        "donation": any(
+            x in text for x in ("donation", "donate", "beneficiary", "fundraising", "gift aid", "donazione", "donare")
+        ),
+        "account": any(
+            x in text for x in ("password", "login", "credentials", "account", "otp", "reset", "credenzial", "accesso")
+        ),
+        "partner": any(
+            x in text
+            for x in (
+                "partner",
+                "supplier",
+                "vendor",
+                "provider",
+                "procurement",
+                "tender",
+                "supplier",
+                "fornit",
+                "bando",
+            )
+        ),
+        "press": any(
+            x in text for x in ("press", "media", "newsroom", "press office", "comms", "communications", "stampa")
+        ),
         "hospitality": any(k in sector_norm for k in ("hotel", "hospitality", "resort", "travel")),
-        "ngo": any(k in sector_norm for k in ("ngo", "nonprofit", "non-profit", "charity", "aid", "humanitarian", "onlus", "associazione")),
+        "ngo": any(
+            k in sector_norm
+            for k in ("ngo", "nonprofit", "non-profit", "charity", "aid", "humanitarian", "onlus", "associazione")
+        ),
     }
     return flags
 
@@ -283,7 +310,9 @@ def _risk_type_mentions_outside_evidence(text: str, *, wf: dict[str, bool], vend
     # Vendor mentions: only allow if the vendor is actually present in evidence hits.
     for kw in VENDOR_KEYWORDS:
         if kw and kw.lower() in t:
-            ok = any(kw.lower() == (v or "").lower() for v in vendor_hits) or any(kw.lower() in (v or "").lower() for v in vendor_hits)
+            ok = any(kw.lower() == (v or "").lower() for v in vendor_hits) or any(
+                kw.lower() in (v or "").lower() for v in vendor_hits
+            )
             if not ok:
                 flags.append(f"unreferenced_vendor:{kw.lower()}")
     # Workflow mentions: require the corresponding workflow flag.
@@ -334,7 +363,21 @@ def _assign_primary_risk_type(
     if int(counts.get("EXTERNAL_ATTENTION", 0) or 0) > 0:
         bundle_kinds.add("attention")
 
-    signal_diversity = len([k for k in ("CONTACT_CHANNEL", "SOCIAL_TRUST_NODE", "PROCESS_CUE", "VENDOR_CUE", "ORG_CUE", "EXTERNAL_ATTENTION", "INFRA_CUE") if k in present])
+    signal_diversity = len(
+        [
+            k
+            for k in (
+                "CONTACT_CHANNEL",
+                "SOCIAL_TRUST_NODE",
+                "PROCESS_CUE",
+                "VENDOR_CUE",
+                "ORG_CUE",
+                "EXTERNAL_ATTENTION",
+                "INFRA_CUE",
+            )
+            if k in present
+        ]
+    )
     req_diversity = 2 + (1 if diversity_guard else 0)
 
     baseline = False
@@ -343,27 +386,50 @@ def _assign_primary_risk_type(
 
     # Pattern penalty: emails + policy only should never look elevated.
     policy_only = bool(evidence_refs) and all(_is_policy_url(r.url) for r in evidence_refs if r.url)
-    contact_only = signal_diversity <= 1 and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0) and int(counts.get("PROCESS_CUE", 0) or 0) == 0 and int(counts.get("VENDOR_CUE", 0) or 0) == 0
+    contact_only = (
+        signal_diversity <= 1
+        and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0)
+        and int(counts.get("PROCESS_CUE", 0) or 0) == 0
+        and int(counts.get("VENDOR_CUE", 0) or 0) == 0
+    )
     if policy_only or contact_only:
         baseline = True
 
     # Deterministic type rules (prioritized).
     primary = "Channel ambiguity exploitation"
-    if wf.get("payment") and (int(counts.get("VENDOR_CUE", 0) or 0) > 0 or vendor_hits) and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("INFRA_CUE", 0) or 0) > 0):
+    if (
+        wf.get("payment")
+        and (int(counts.get("VENDOR_CUE", 0) or 0) > 0 or vendor_hits)
+        and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("INFRA_CUE", 0) or 0) > 0)
+    ):
         primary = "Payment fraud"
-    elif wf.get("booking") and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("INFRA_CUE", 0) or 0) > 0):
+    elif wf.get("booking") and (
+        int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("INFRA_CUE", 0) or 0) > 0
+    ):
         primary = "Booking fraud"
-    elif wf.get("donation") and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("SOCIAL_TRUST_NODE", 0) or 0) > 0):
+    elif wf.get("donation") and (
+        int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("SOCIAL_TRUST_NODE", 0) or 0) > 0
+    ):
         primary = "Donation fraud"
-    elif (int(counts.get("VENDOR_CUE", 0) or 0) > 0 or vendor_hits) and (wf.get("payment") or wf.get("booking") or wf.get("account")) and int(counts.get("PROCESS_CUE", 0) or 0) > 0:
+    elif (
+        (int(counts.get("VENDOR_CUE", 0) or 0) > 0 or vendor_hits)
+        and (wf.get("payment") or wf.get("booking") or wf.get("account"))
+        and int(counts.get("PROCESS_CUE", 0) or 0) > 0
+    ):
         primary = "Vendor trust abuse"
-    elif wf.get("account") and (int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("PROCESS_CUE", 0) or 0) > 0):
+    elif wf.get("account") and (
+        int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0 or int(counts.get("PROCESS_CUE", 0) or 0) > 0
+    ):
         primary = "Account takeover vector"
-    elif (int(counts.get("ORG_CUE", 0) or 0) > 0 or int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0) and (int(counts.get("PROCESS_CUE", 0) or 0) > 0 or trust_friction):
+    elif (int(counts.get("ORG_CUE", 0) or 0) > 0 or int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0) and (
+        int(counts.get("PROCESS_CUE", 0) or 0) > 0 or trust_friction
+    ):
         primary = "Social engineering"
     elif wf.get("partner") or (wf.get("press") and int(counts.get("CONTACT_CHANNEL", 0) or 0) > 0):
         primary = "Partner impersonation"
-    elif policy_only or (wf.get("account") and "privacy" in _norm_text(" ".join([r.url for r in evidence_refs[:6] if r.url]))):
+    elif policy_only or (
+        wf.get("account") and "privacy" in _norm_text(" ".join([r.url for r in evidence_refs[:6] if r.url]))
+    ):
         primary = "Data handling abuse"
     elif (int(counts.get("VENDOR_CUE", 0) or 0) > 0 or vendor_hits) and signal_diversity >= 2:
         primary = "Supply chain dependency risk"
@@ -405,7 +471,11 @@ def _assign_primary_risk_type(
 
     # Mandatory verdict structure in stored summary (used by overview/detail).
     cond_phrase = " + ".join(conditions[:3])
-    summary = f"Top risk: {primary} enabled by {cond_phrase}." if cond_phrase else f"Top risk: {primary} enabled by limited public signals."
+    summary = (
+        f"Top risk: {primary} enabled by {cond_phrase}."
+        if cond_phrase
+        else f"Top risk: {primary} enabled by limited public signals."
+    )
 
     flags = {
         "signal_diversity_count": int(signal_diversity),
@@ -416,6 +486,8 @@ def _assign_primary_risk_type(
         "diversity_guard": bool(diversity_guard),
     }
     return primary, bool(baseline), summary[:280], conditions, flags
+
+
 PROHIBITED_PATTERN = re.compile(
     r"\b("
     r"email template|subject line|send this email|copy paste message|credential harvesting|"
@@ -1123,9 +1195,7 @@ def _filter_evidence_relevance(
     # produce watchlist scenarios instead of an empty output.
     if not accepted:
         candidates = [
-            ev
-            for ev in (evidence_refs or [])
-            if (not bool(ev.is_boilerplate)) and float(ev.weight or 0.0) >= 0.25
+            ev for ev in (evidence_refs or []) if (not bool(ev.is_boilerplate)) and float(ev.weight or 0.0) >= 0.25
         ]
         if not candidates:
             candidates = [ev for ev in (evidence_refs or []) if not bool(ev.is_boilerplate)]
@@ -1284,13 +1354,41 @@ def _data_sensitivity_kinds(evidence_refs: list[EvidenceRef]) -> set[str]:
             continue
         blob = f"{ev.title} {ev.snippet}"
         low = _norm_text(blob)
-        if any(x in low for x in ("password", "credential", "credenzial", "login details", "dettagli di accesso", "reset password", "account recovery")):
+        if any(
+            x in low
+            for x in (
+                "password",
+                "credential",
+                "credenzial",
+                "login details",
+                "dettagli di accesso",
+                "reset password",
+                "account recovery",
+            )
+        ):
             kinds.add("CREDENTIALS")
-        if any(x in low for x in ("booking", "reservation", "prenot", "payment", "invoice", "billing", "fattura", "pagamento", "refund", "rimborso")):
+        if any(
+            x in low
+            for x in (
+                "booking",
+                "reservation",
+                "prenot",
+                "payment",
+                "invoice",
+                "billing",
+                "fattura",
+                "pagamento",
+                "refund",
+                "rimborso",
+            )
+        ):
             kinds.add("BOOKING_PAYMENT")
         if any(x in low for x in ("loyalty", "fedelt", "points", "punti")):
             kinds.add("LOYALTY")
-        if any(x in low for x in ("chat conversation", "chat transcript", "conversation details", "dettagli conversazione", "chat")):
+        if any(
+            x in low
+            for x in ("chat conversation", "chat transcript", "conversation details", "dettagli conversazione", "chat")
+        ):
             kinds.add("CHAT")
         if _text_has_any(low, DATA_SENS_HIGH_PATTERNS):
             kinds.add("HIGH_SENS_GENERIC")
@@ -1348,7 +1446,11 @@ def _has_channel_coupling(evidence_refs: list[EvidenceRef]) -> bool:
         blob = f"{ev.title} {ev.snippet}"
         low = _norm_text(blob)
         is_sensitive = _text_has_any(low, DATA_SENS_HIGH_PATTERNS)
-        is_channel = _text_has_any(low, CHANNEL_HINT_PATTERNS) or bool(re.search(r"@[a-z0-9.-]+\\.[a-z]{2,}", ev.snippet or "", re.IGNORECASE)) or (ev.signal_type or "").upper() == "CONTACT_CHANNEL"
+        is_channel = (
+            _text_has_any(low, CHANNEL_HINT_PATTERNS)
+            or bool(re.search(r"@[a-z0-9.-]+\\.[a-z]{2,}", ev.snippet or "", re.IGNORECASE))
+            or (ev.signal_type or "").upper() == "CONTACT_CHANNEL"
+        )
         any_sensitive = any_sensitive or is_sensitive
         any_channel = any_channel or is_channel
 
@@ -1395,6 +1497,8 @@ def _trust_friction_for_assessment(assessment_id: int) -> bool:
             return False
     _ = scanned
     return True
+
+
 def _call_reasoner_llm(
     *,
     api_key: str,
@@ -1472,11 +1576,7 @@ def _call_reasoner_llm(
             logger.warning("Reasoner LLM request failed: status=%s body=%s", res.status_code, res.text[:400])
             return None
         body = res.json()
-        content = (
-            body.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "{}")
-        )
+        content = body.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         return json.loads(content)
     except Exception:
         logger.exception("Reasoner LLM request failed unexpectedly")
@@ -1687,7 +1787,9 @@ def _create_hypothesis_row(
         baseline_exposure = False
         if is_hospitality:
             c = meta.get("signal_counts") if isinstance(meta.get("signal_counts"), dict) else {}
-            channel_count = int((c or {}).get("CONTACT_CHANNEL", 0) or 0) + int((c or {}).get("SOCIAL_TRUST_NODE", 0) or 0)
+            channel_count = int((c or {}).get("CONTACT_CHANNEL", 0) or 0) + int(
+                (c or {}).get("SOCIAL_TRUST_NODE", 0) or 0
+            )
             has_only_channels = (
                 channel_count > 0
                 and int((c or {}).get("PROCESS_CUE", 0) or 0) == 0
@@ -1708,15 +1810,23 @@ def _create_hypothesis_row(
         # Specialized short title for high-sensitivity handling (stakeholder friendly).
         if data_sens_high:
             low_blob = _norm_text(" ".join([f"{r.title} {r.snippet}" for r in evidence_refs[:6]]))
-            if "CREDENTIALS" in sens_kinds or any(x in low_blob for x in ("password", "credential", "credenzial", "login details")):
+            if "CREDENTIALS" in sens_kinds or any(
+                x in low_blob for x in ("password", "credential", "credenzial", "login details")
+            ):
                 title = "Credential and account handling via external channels"
-            elif "BOOKING_PAYMENT" in sens_kinds or any(x in low_blob for x in ("booking", "reservation", "payment", "invoice", "billing", "prenot", "pagamento", "fattura")):
+            elif "BOOKING_PAYMENT" in sens_kinds or any(
+                x in low_blob
+                for x in ("booking", "reservation", "payment", "invoice", "billing", "prenot", "pagamento", "fattura")
+            ):
                 title = "Booking and payment workflow exposure"
         else:
             # Policy + DSAR/rights handling specialization
             if risk_type == "privacy_data_risk":
                 low_blob = _norm_text(" ".join([f"{r.title} {r.snippet} {r.url}" for r in evidence_refs[:6]]))
-                dsar = any(x in low_blob for x in ("data subject", "dsar", "rights request", "access request", "diritti", "richiesta", "dpo"))
+                dsar = any(
+                    x in low_blob
+                    for x in ("data subject", "dsar", "rights request", "access request", "diritti", "richiesta", "dpo")
+                )
                 if dsar and has_policy:
                     title = "Data subject request handling exposure"
 
@@ -1802,7 +1912,9 @@ def _create_hypothesis_row(
             recent: list[str] = []
             # Collect top risk types per recent assessment (best-effort).
             recent_rows = db.execute(
-                select(Hypothesis.assessment_id, Hypothesis.primary_risk_type, Hypothesis.severity, Hypothesis.created_at)
+                select(
+                    Hypothesis.assessment_id, Hypothesis.primary_risk_type, Hypothesis.severity, Hypothesis.created_at
+                )
                 .where(Hypothesis.assessment_id != assessment_id, Hypothesis.primary_risk_type != "")
                 .order_by(Hypothesis.created_at.desc(), Hypothesis.severity.desc())
                 .limit(60)
@@ -1868,8 +1980,12 @@ def _create_hypothesis_row(
                 f"Evidence is incomplete; treat this as a defensive prioritization hypothesis.",
                 max_lines=6,
             )[:1400]
-            likelihood_rationale = "Derived from distinct public signals; repetition alone does not increase confidence."
-            impact_rationale = "Impact is a conservative estimate based on exposed channels and workflow sensitivity cues."
+            likelihood_rationale = (
+                "Derived from distinct public signals; repetition alone does not increase confidence."
+            )
+            impact_rationale = (
+                "Impact is a conservative estimate based on exposed channels and workflow sensitivity cues."
+            )
 
         row = Hypothesis(
             assessment_id=assessment_id,

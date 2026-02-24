@@ -72,9 +72,7 @@ class Evidence(Base):
 
 class Document(Base):
     __tablename__ = "documents"
-    __table_args__ = (
-        Index("ix_documents_assessment_content_hash", "assessment_id", "content_hash"),
-    )
+    __table_args__ = (Index("ix_documents_assessment_content_hash", "assessment_id", "content_hash"),)
 
     id = Column(Integer, primary_key=True, index=True)
     assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=False, index=True)
@@ -197,9 +195,7 @@ class Hypothesis(Base):
 
 class WorkflowNode(Base):
     __tablename__ = "workflow_nodes"
-    __table_args__ = (
-        Index("ix_workflow_nodes_assessment_kind", "assessment_id", "workflow_kind"),
-    )
+    __table_args__ = (Index("ix_workflow_nodes_assessment_kind", "assessment_id", "workflow_kind"),)
 
     id = Column(Integer, primary_key=True, index=True)
     assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=False, index=True)
@@ -222,9 +218,7 @@ class WorkflowNode(Base):
 
 class SocialTrustNode(Base):
     __tablename__ = "social_trust_nodes"
-    __table_args__ = (
-        Index("ix_social_trust_nodes_assessment_platform", "assessment_id", "platform"),
-    )
+    __table_args__ = (Index("ix_social_trust_nodes_assessment_platform", "assessment_id", "platform"),)
 
     id = Column(Integer, primary_key=True, index=True)
     assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=False, index=True)
@@ -318,9 +312,7 @@ class ConnectorSetting(Base):
 
 class ExaminationLog(Base):
     __tablename__ = "examination_logs"
-    __table_args__ = (
-        Index("ix_examination_logs_assessment_content_hash", "assessment_id", "content_hash"),
-    )
+    __table_args__ = (Index("ix_examination_logs_assessment_content_hash", "assessment_id", "content_hash"),)
 
     id = Column(Integer, primary_key=True, index=True)
     assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=False, index=True)

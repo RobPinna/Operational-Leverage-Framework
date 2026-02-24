@@ -165,24 +165,36 @@ def _confirm_deny_for_social_node(
     if contact_in_bio:
         confirm.append("Email/phone contact details are exposed in the social profile bio.")
     if social_to_booking:
-        confirm.append("The social profile links into booking/payment flows (higher reliance on clear verification controls).")
+        confirm.append(
+            "The social profile links into booking/payment flows (higher reliance on clear verification controls)."
+        )
     if not bool(global_flags.get("has_trust_guidance", False)):
-        confirm.append("No clear official-channel verification or anti-impersonation guidance was found in the indexed corpus.")
+        confirm.append(
+            "No clear official-channel verification or anti-impersonation guidance was found in the indexed corpus."
+        )
 
     deny.append("Verified social accounts are used and consistently linked from official web pages.")
     deny.append("A centralized list of official channels is published, including social handles and verified domains.")
     if has_dm_workflow or social_to_booking:
-        deny.append("Clear guidance exists: sensitive actions are never handled via DM; changes require verified channels and out-of-band checks.")
+        deny.append(
+            "Clear guidance exists: sensitive actions are never handled via DM; changes require verified channels and out-of-band checks."
+        )
 
     return [x for x in confirm if x][:4], [x for x in deny if x][:4]
 
 
-def _social_workflow_nodes(db: Session, assessment: Assessment, global_flags: dict[str, Any]) -> tuple[list[WorkflowNode], dict[int, int]]:
+def _social_workflow_nodes(
+    db: Session, assessment: Assessment, global_flags: dict[str, Any]
+) -> tuple[list[WorkflowNode], dict[int, int]]:
     nodes: list[WorkflowNode] = []
     score_by_social_id: dict[int, int] = {}
 
     social_rows = (
-        db.execute(select(SocialTrustNode).where(SocialTrustNode.assessment_id == assessment.id).order_by(SocialTrustNode.updated_at.desc()))
+        db.execute(
+            select(SocialTrustNode)
+            .where(SocialTrustNode.assessment_id == assessment.id)
+            .order_by(SocialTrustNode.updated_at.desc())
+        )
         .scalars()
         .all()
     )
@@ -193,7 +205,9 @@ def _social_workflow_nodes(db: Session, assessment: Assessment, global_flags: di
 
         contact_in_bio = bool(s.has_email_in_bio or s.has_phone_in_bio)
         has_dm_workflow = bool(s.mentions_dm_contact)
-        social_to_booking = bool(s.mentions_booking or any(k in (str(s.link_in_bio or "").lower()) for k in SOCIAL_BOOKING_URL_HINTS))
+        social_to_booking = bool(
+            s.mentions_booking or any(k in (str(s.link_in_bio or "").lower()) for k in SOCIAL_BOOKING_URL_HINTS)
+        )
         verified = s.verified_status if isinstance(s.verified_status, bool) else None
 
         booking_link = str(s.link_in_bio or "").strip()
@@ -222,7 +236,13 @@ def _social_workflow_nodes(db: Session, assessment: Assessment, global_flags: di
                 }
             )
         if not evidence:
-            evidence = [{"url": profile_url[:1024], "title": f"{s.platform} @{s.handle}".strip()[:255], "snippet": (s.bio_text or "")[:380]}]
+            evidence = [
+                {
+                    "url": profile_url[:1024],
+                    "title": f"{s.platform} @{s.handle}".strip()[:255],
+                    "snippet": (s.bio_text or "")[:380],
+                }
+            ]
 
         # DM workflow node
         if has_dm_workflow:
@@ -369,7 +389,13 @@ WORKFLOWS: list[WorkflowDefinition] = [
         title="Booking modification",
         query="booking modification reservation change modify booking change reservation",
         sensitivity="HIGH",
-        anchors=("modify booking", "booking modification", "reservation change", "change reservation", "booking change"),
+        anchors=(
+            "modify booking",
+            "booking modification",
+            "reservation change",
+            "change reservation",
+            "booking change",
+        ),
     ),
     WorkflowDefinition(
         kind="PAYMENT_REQUEST",
@@ -428,7 +454,9 @@ def _is_boilerplate(snippet: str, title: str = "") -> bool:
 def _channel_type_from_evidence(url: str, snippet: str, doc_type: str = "") -> str:
     u = (url or "").lower()
     s = _norm(snippet)
-    if any(x in u for x in ("/login", "/signin", "/account", "/portal", "/dashboard")) or any(x in s for x in ("portal", "my account", "dashboard", "area riservata", "accedi")):
+    if any(x in u for x in ("/login", "/signin", "/account", "/portal", "/dashboard")) or any(
+        x in s for x in ("portal", "my account", "dashboard", "area riservata", "accedi")
+    ):
         return "portal"
     if "chat" in s or any(x in u for x in ("/chat", "/livechat")):
         return "chat"
@@ -458,7 +486,14 @@ def _trust_flags_for_assessment(db: Session, assessment_id: int) -> dict[str, bo
     has_trust_guidance = any(_norm(p) in low for p in TRUST_GUIDANCE_PATTERNS)
     has_verification = any(_norm(p) in low for p in VERIFICATION_PATTERNS)
     has_secure_portal = any(_norm(p) in low for p in SECURE_PORTAL_PATTERNS)
-    has_never_ask_pw = any(_norm(p) in low for p in ("we will never ask for your password", "never ask for your password", "non ti chiederemo mai la password"))
+    has_never_ask_pw = any(
+        _norm(p) in low
+        for p in (
+            "we will never ask for your password",
+            "never ask for your password",
+            "non ti chiederemo mai la password",
+        )
+    )
     return {
         "has_trust_guidance": bool(has_trust_guidance),
         "has_verification": bool(has_verification),
@@ -477,7 +512,9 @@ def _anchor_hits(snippet: str, title: str, anchors: tuple[str, ...]) -> int:
     return hits
 
 
-def _evidence_for_workflow(assessment_id: int, wf: WorkflowDefinition, *, top_k: int = 6, min_ratio: float = 0.70) -> list[dict[str, Any]]:
+def _evidence_for_workflow(
+    assessment_id: int, wf: WorkflowDefinition, *, top_k: int = 6, min_ratio: float = 0.70
+) -> list[dict[str, Any]]:
     # Pull a decent candidate set, then apply ratio threshold.
     candidates = search(assessment_id, wf.query, top_k=max(20, int(top_k) * 6))
     if not candidates:
@@ -518,12 +555,16 @@ def _evidence_for_workflow(assessment_id: int, wf: WorkflowDefinition, *, top_k:
     return out
 
 
-def _confirm_deny_for_node(*, wf: WorkflowDefinition, flags: dict[str, Any], channel_type: str, sensitivity: str) -> tuple[list[str], list[str]]:
+def _confirm_deny_for_node(
+    *, wf: WorkflowDefinition, flags: dict[str, Any], channel_type: str, sensitivity: str
+) -> tuple[list[str], list[str]]:
     confirm: list[str] = []
     deny: list[str] = []
 
     if sensitivity == "HIGH" and channel_type in {"email", "chat", "form", "unknown"}:
-        confirm.append("Sensitive workflow references appear tied to externally reachable channels (higher trust dependency).")
+        confirm.append(
+            "Sensitive workflow references appear tied to externally reachable channels (higher trust dependency)."
+        )
     if not bool(flags.get("has_trust_guidance", False)):
         confirm.append("Official-channel verification guidance was not found in the indexed corpus.")
     if not bool(flags.get("has_never_ask_password", False)) and wf.kind in {"PASSWORD_HANDLING", "LOGIN_HANDLING"}:
@@ -533,7 +574,9 @@ def _confirm_deny_for_node(*, wf: WorkflowDefinition, flags: dict[str, Any], cha
 
     deny.append("A centralized, signed registry of official contact channels is published and consistently referenced.")
     if wf.kind in {"PASSWORD_HANDLING", "LOGIN_HANDLING"}:
-        deny.append("A clear statement exists and is visible: the organization will never request passwords or login details.")
+        deny.append(
+            "A clear statement exists and is visible: the organization will never request passwords or login details."
+        )
         deny.append("Credential and account recovery actions are restricted to secure portals (not email/chat).")
     if wf.kind in {"BOOKING_MODIFICATION", "PAYMENT_REQUEST"}:
         deny.append("Sensitive booking/payment changes require out-of-band verification and approvals.")
@@ -624,7 +667,9 @@ def generate_trust_workflow_map(
             {
                 "workflow_kind": wf.kind,
                 "policy_only": bool(evs) and all(_is_policy_url(str(x.get("url", ""))) for x in evs),
-                "distinct_url_count": len({str(x.get("url", "")).strip().lower() for x in evs if str(x.get("url", "")).strip()}),
+                "distinct_url_count": len(
+                    {str(x.get("url", "")).strip().lower() for x in evs if str(x.get("url", "")).strip()}
+                ),
             }
         )
 
@@ -693,7 +738,7 @@ def generate_trust_workflow_map(
                         .where(
                             Hypothesis.assessment_id == assessment_id,
                             Hypothesis.risk_type == "social_trust_surface_exposure",
-                            Hypothesis.signal_counts_json.ilike(f"%\\\"__social_node_id__\\\": {social_id_int}%"),
+                            Hypothesis.signal_counts_json.ilike(f'%\\"__social_node_id__\\": {social_id_int}%'),
                         )
                         .limit(1)
                     )
@@ -705,7 +750,9 @@ def generate_trust_workflow_map(
 
                 contact_in_bio = bool(s.has_email_in_bio or s.has_phone_in_bio)
                 dm_workflow = bool(s.mentions_dm_contact)
-                social_to_booking = bool(s.mentions_booking or any(k in (str(s.link_in_bio or "").lower()) for k in SOCIAL_BOOKING_URL_HINTS))
+                social_to_booking = bool(
+                    s.mentions_booking or any(k in (str(s.link_in_bio or "").lower()) for k in SOCIAL_BOOKING_URL_HINTS)
+                )
                 verified = s.verified_status if isinstance(s.verified_status, bool) else None
                 trust_friction = not bool(global_flags.get("has_trust_guidance", False))
 
@@ -800,7 +847,9 @@ def generate_trust_workflow_map(
                         else "Top risk: Social engineering enabled by official social channel touchpoints + public contact cues + multi-channel trust ambiguity."
                     )[:280],
                     baseline_tag=False,
-                    integrity_flags_json=json.dumps({"source": "trust_workflows", "social_to_booking": bool(social_to_booking)}, ensure_ascii=True),
+                    integrity_flags_json=json.dumps(
+                        {"source": "trust_workflows", "social_to_booking": bool(social_to_booking)}, ensure_ascii=True
+                    ),
                     severity=int(severity),
                     title="Social Channel Trust Surface Exposure",
                     description=description[:1400],
@@ -897,7 +946,15 @@ def generate_trust_workflow_map(
                 primary_risk_type=(
                     "Payment fraud"
                     if any(x in (n.title or "").lower() for x in ("payment", "billing", "invoice"))
-                    else ("Booking fraud" if any(x in (n.title or "").lower() for x in ("booking", "reservation")) else ("Account takeover vector" if any(x in (n.title or "").lower() for x in ("password", "login", "account")) else "Channel ambiguity exploitation"))
+                    else (
+                        "Booking fraud"
+                        if any(x in (n.title or "").lower() for x in ("booking", "reservation"))
+                        else (
+                            "Account takeover vector"
+                            if any(x in (n.title or "").lower() for x in ("password", "login", "account"))
+                            else "Channel ambiguity exploitation"
+                        )
+                    )
                 ),
                 risk_vector_summary=(
                     "Top risk: Payment fraud enabled by operational workflow cues + externally reachable channel dependency + missing verification guidance."
@@ -913,7 +970,9 @@ def generate_trust_workflow_map(
                     )
                 )[:280],
                 baseline_tag=False,
-                integrity_flags_json=json.dumps({"source": "trust_workflows", "workflow_node_id": int(n.id)}, ensure_ascii=True),
+                integrity_flags_json=json.dumps(
+                    {"source": "trust_workflows", "workflow_node_id": int(n.id)}, ensure_ascii=True
+                ),
                 severity=int(severity),
                 title=f"Workflow-level trust exposure: {n.title}"[:255],
                 description=description[:1400],

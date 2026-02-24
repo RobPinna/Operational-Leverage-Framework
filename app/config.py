@@ -1,10 +1,10 @@
-from functools import lru_cache
 import json
-from pathlib import Path
 import os
 import secrets
 import sys
 import tempfile
+from functools import lru_cache
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -116,27 +116,43 @@ def _runtime_secret(env_name: str, *, token_size: int = 32) -> str:
     return generated
 
 
+def _split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
 class Settings:
-    app_name: str = os.getenv("APP_NAME", "ExposureMapper TI")
-    app_env: str = os.getenv("APP_ENV", "dev")
-    secret_key: str = _runtime_secret("SECRET_KEY")
-    password_pepper: str = _runtime_secret("PASSWORD_PEPPER")
-    api_key_pepper: str = _runtime_secret("API_KEY_PEPPER")
-    session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "exposuremapper_session")
-    runtime_dir: Path = Path(os.getenv("RUNTIME_DIR", str(_default_runtime_dir()))).expanduser()
-    _default_db_path: Path = runtime_dir / "exposuremapper.db"
-    database_url: str = os.getenv("DATABASE_URL", f"sqlite:///{_default_db_path.as_posix()}")
-    request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "8"))
-    website_user_agent: str = os.getenv(
-        "WEBSITE_USER_AGENT", "ExposureMapperTI/1.0 (+local-assessment)"
-    )
-    default_admin_user: str = os.getenv("DEFAULT_ADMIN_USER", "admin")
-    default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123!")
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_reasoner_model: str = os.getenv("OPENAI_REASONER_MODEL", "gpt-4.1")
-    openai_hypothesis_confidence_threshold: int = int(os.getenv("OPENAI_HYPOTHESIS_CONFIDENCE_THRESHOLD", "55"))
-    # Admin-only debug toggles (UI may display additional validator details).
-    admin_debug_risk: bool = os.getenv("ADMIN_DEBUG_RISK", "0").strip() == "1"
+    def __init__(self) -> None:
+        self.app_name: str = os.getenv("APP_NAME", "ExposureMapper TI")
+        self.app_env: str = os.getenv("APP_ENV", "dev")
+        self.secret_key: str = _runtime_secret("SECRET_KEY")
+        self.password_pepper: str = _runtime_secret("PASSWORD_PEPPER")
+        self.api_key_pepper: str = _runtime_secret("API_KEY_PEPPER")
+        self.session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "exposuremapper_session")
+        self.runtime_dir: Path = Path(os.getenv("RUNTIME_DIR", str(_default_runtime_dir()))).expanduser()
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        default_db_path: Path = self.runtime_dir / "exposuremapper.db"
+        self.database_url: str = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}")
+        self.request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "8"))
+        self.website_user_agent: str = os.getenv("WEBSITE_USER_AGENT", "ExposureMapperTI/1.0 (+local-assessment)")
+        self.default_admin_user: str = os.getenv("DEFAULT_ADMIN_USER", "admin")
+        self.default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123!")
+        self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+        self.openai_reasoner_model: str = os.getenv("OPENAI_REASONER_MODEL", "gpt-4.1")
+        self.openai_hypothesis_confidence_threshold: int = int(
+            os.getenv("OPENAI_HYPOTHESIS_CONFIDENCE_THRESHOLD", "55")
+        )
+        self.cors_allowed_origins: list[str] = _split_csv(
+            os.getenv(
+                "CORS_ALLOWED_ORIGINS",
+                "http://127.0.0.1,http://localhost,http://127.0.0.1:56461,http://localhost:56461",
+            )
+        )
+        self.cors_allow_origin_regex: str = os.getenv(
+            "CORS_ALLOW_ORIGIN_REGEX",
+            r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        )
+        # Admin-only debug toggles (UI may display additional validator details).
+        self.admin_debug_risk: bool = os.getenv("ADMIN_DEBUG_RISK", "0").strip() == "1"
 
 
 @lru_cache

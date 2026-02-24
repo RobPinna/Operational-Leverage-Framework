@@ -6,7 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Assessment, Hypothesis, WorkflowNode
-from app.services.risk_story import _canonical_url, _parse_signal_counts_blob, _risk_outcome_label, _sentence_case, build_overview_viewmodel
+from app.services.risk_story import (
+    _canonical_url,
+    _parse_signal_counts_blob,
+    _risk_outcome_label,
+    _sentence_case,
+    build_overview_viewmodel,
+)
 from app.utils.jsonx import from_json
 
 
@@ -29,7 +35,9 @@ def build_evidence_log_viewmodel(
     evidence_sets = ov.get("evidenceSets") or {}
 
     risks = (
-        db.execute(select(Hypothesis).where(Hypothesis.assessment_id == assessment_id).order_by(Hypothesis.severity.desc()))
+        db.execute(
+            select(Hypothesis).where(Hypothesis.assessment_id == assessment_id).order_by(Hypothesis.severity.desc())
+        )
         .scalars()
         .all()
     )
@@ -56,7 +64,9 @@ def build_evidence_log_viewmodel(
         .scalars()
         .all()
     )
-    workflow_titles = {int(n.id): (" ".join((n.title or "").split()).strip() or f"Workflow {int(n.id)}") for n in workflow_nodes}
+    workflow_titles = {
+        int(n.id): (" ".join((n.title or "").split()).strip() or f"Workflow {int(n.id)}") for n in workflow_nodes
+    }
 
     # Accumulate evidence items and link them back to risks and workflow nodes.
     ev_map: dict[str, dict[str, Any]] = {}
@@ -177,7 +187,9 @@ def build_evidence_log_viewmodel(
                 "weight": float(r.get("weight", 1.0) or 1.0),
                 "occurrences": int(r.get("occurrences", 1) or 1),
                 "linked_risks": [{"id": int(x), "title": risk_titles.get(int(x), f"Risk {int(x)}")} for x in lr[:6]],
-                "linked_workflows": [{"id": int(x), "title": workflow_titles.get(int(x), f"Workflow {int(x)}")} for x in lw[:4]],
+                "linked_workflows": [
+                    {"id": int(x), "title": workflow_titles.get(int(x), f"Workflow {int(x)}")} for x in lw[:4]
+                ],
                 "open_risk_url": (
                     f"/assessments/{assessment_id}/risks/{int(best_risk)}#evidence" if best_risk is not None else ""
                 ),

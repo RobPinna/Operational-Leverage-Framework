@@ -34,12 +34,16 @@ class EmailPostureAnalyzerConnector(ConnectorBase):
         if not assessment_id:
             return [], []
         with SessionLocal() as db:
-            rows = db.execute(
-                select(Evidence).where(
-                    Evidence.assessment_id == assessment_id,
-                    Evidence.connector == "dns_footprint",
+            rows = (
+                db.execute(
+                    select(Evidence).where(
+                        Evidence.assessment_id == assessment_id,
+                        Evidence.connector == "dns_footprint",
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         mx_values: list[str] = []
         txt_values: list[str] = []
         for ev in rows:

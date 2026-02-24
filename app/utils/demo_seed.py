@@ -716,7 +716,9 @@ def _desertaid_documents(domain: str) -> list[DemoDocumentSeed]:
             title="DesertAid Organizational Structure",
             extracted_text=(
                 "Roles listed: Donor Relations Lead, Beneficiary Support Manager, Field Logistics Coordinator, Safeguarding Officer. "
-                "Contact aliases are generic and channel-based (donor.support@{d}, beneficiary.support@{d}).".format(d=domain)
+                "Contact aliases are generic and channel-based (donor.support@{d}, beneficiary.support@{d}).".format(
+                    d=domain
+                )
             ),
         ),
         DemoDocumentSeed(

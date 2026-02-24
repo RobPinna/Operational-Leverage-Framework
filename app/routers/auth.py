@@ -28,12 +28,7 @@ def login_submit(
     db: Session = Depends(get_db),
 ):
     user = (
-        db.execute(
-            select(User)
-            .where(User.username == username.strip())
-            .order_by(User.id.desc())
-            .limit(1)
-        )
+        db.execute(select(User).where(User.username == username.strip()).order_by(User.id.desc()).limit(1))
         .scalars()
         .first()
     )

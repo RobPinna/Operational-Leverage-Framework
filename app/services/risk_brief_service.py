@@ -194,17 +194,27 @@ def _attack_type_from_input(inp: BriefInput) -> str:
         ]
     ).lower()
 
-    if any(x in blob for x in ("account recovery", "password", "login", "credential")) or rt in {"credential_theft_risk"} or "account takeover" in primary:
+    if (
+        any(x in blob for x in ("account recovery", "password", "login", "credential"))
+        or rt in {"credential_theft_risk"}
+        or "account takeover" in primary
+    ):
         return "Account takeover via identity verification abuse"
-    if any(x in blob for x in ("payment", "billing", "invoice", "checkout", "booking modification", "reservation change")) or rt in {"fraud_process"}:
+    if any(
+        x in blob for x in ("payment", "billing", "invoice", "checkout", "booking modification", "reservation change")
+    ) or rt in {"fraud_process"}:
         return "Fraudulent payment or invoice redirection"
-    if any(x in blob for x in ("privacy", "data subject", "gdpr", "cndp", "data protection")) or rt in {"privacy_data_risk"}:
+    if any(x in blob for x in ("privacy", "data subject", "gdpr", "cndp", "data protection")) or rt in {
+        "privacy_data_risk"
+    }:
         return "Unauthorized personal data disclosure"
     if any(x in blob for x in ("dmarc", "spf", "spoof")):
         return "Spoofed email impersonation"
     if any(x in blob for x in ("finance", "procurement", "it support", "dpo", "executive", "role")):
         return "Targeted social engineering against identifiable staff"
-    if any(x in blob for x in ("contact", "phone", "email", "press contact", "support channel", "official channel")) or rt in {
+    if any(
+        x in blob for x in ("contact", "phone", "email", "press contact", "support channel", "official channel")
+    ) or rt in {
         "impersonation",
         "brand_abuse",
         "downstream_pivot",
@@ -227,13 +237,25 @@ def _impact_from_input(inp: BriefInput) -> str:
         ]
     ).lower()
 
-    if any(x in blob for x in ("payment", "billing", "invoice", "checkout", "booking", "reservation")) or rt in {"fraud_process"}:
+    if any(x in blob for x in ("payment", "billing", "invoice", "checkout", "booking", "reservation")) or rt in {
+        "fraud_process"
+    }:
         return "fraudulent payments and financial loss"
-    if any(x in blob for x in ("privacy", "data subject", "data request", "personal data")) or rt in {"privacy_data_risk"} or "data handling" in primary:
+    if (
+        any(x in blob for x in ("privacy", "data subject", "data request", "personal data"))
+        or rt in {"privacy_data_risk"}
+        or "data handling" in primary
+    ):
         return "unauthorized data disclosure and reputational damage"
-    if any(x in blob for x in ("password", "login", "account recovery", "credential")) or rt in {"credential_theft_risk"}:
+    if any(x in blob for x in ("password", "login", "account recovery", "credential")) or rt in {
+        "credential_theft_risk"
+    }:
         return "account takeover and operational disruption"
-    if any(x in blob for x in ("partner", "client", "guest")) or rt in {"impersonation", "downstream_pivot", "brand_abuse"}:
+    if any(x in blob for x in ("partner", "client", "guest")) or rt in {
+        "impersonation",
+        "downstream_pivot",
+        "brand_abuse",
+    }:
         return "fraudulent requests, operational disruption, and reputational damage"
     return "operational disruption and reputational damage"
 
@@ -244,7 +266,11 @@ def _mechanism_phrase(inp: BriefInput, *, max_conditions: int = 2) -> str:
         return f"{conds[0]} and {conds[1]}"
     if conds:
         return conds[0]
-    wf = [str(w.get("title", "")).strip() for w in (inp.workflow_nodes or []) if isinstance(w, dict) and str(w.get("title", "")).strip()]
+    wf = [
+        str(w.get("title", "")).strip()
+        for w in (inp.workflow_nodes or [])
+        if isinstance(w, dict) and str(w.get("title", "")).strip()
+    ]
     if wf:
         return "publicly documented operational workflows"
     return "publicly identifiable communication channels and process details"
@@ -340,7 +366,7 @@ def _post_llm_with_backoff(
             retry_after = _retry_after_seconds(res.headers)
             backoff = min(
                 LLM_BACKOFF_MAX_SECONDS,
-                (LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
+                (LLM_BACKOFF_BASE_SECONDS * (2**attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
             )
             wait_seconds = max(retry_after, backoff)
             logger.warning(
@@ -359,7 +385,7 @@ def _post_llm_with_backoff(
                 return last_response
             backoff = min(
                 LLM_BACKOFF_MAX_SECONDS,
-                (LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
+                (LLM_BACKOFF_BASE_SECONDS * (2**attempt)) + random.uniform(0, LLM_BACKOFF_JITTER_SECONDS),
             )
             logger.warning(
                 "%s LLM transport error attempt=%s/%s wait=%.2fs err=%s",
@@ -464,7 +490,21 @@ def _validate_brief_text(text: str, *, inp: BriefInput, recent_briefs: list[str]
     allows_booking = any(k in ctx for k in ("booking", "reservation", "concierge", "guest"))
     allows_donation = any(k in ctx for k in ("donation", "donate", "fundraising", "beneficiary"))
     allows_account = any(k in ctx for k in ("password", "login", "credentials", "account", "mfa", "otp", "sso"))
-    allows_social = any(k in ctx for k in ("instagram", "linkedin", "facebook", "tiktok", "youtube", "x.com", "twitter", "social", "dm", "direct message"))
+    allows_social = any(
+        k in ctx
+        for k in (
+            "instagram",
+            "linkedin",
+            "facebook",
+            "tiktok",
+            "youtube",
+            "x.com",
+            "twitter",
+            "social",
+            "dm",
+            "direct message",
+        )
+    )
     if any(k in out_low for k in ("payment", "billing", "invoice", "refund")) and not allows_payment:
         return False, "unreferenced_workflow:payment"
     if any(k in out_low for k in ("booking", "reservation", "concierge")) and not allows_booking:
@@ -478,7 +518,26 @@ def _validate_brief_text(text: str, *, inp: BriefInput, recent_briefs: list[str]
 
     # Must not introduce vendor cues not provided.
     allowed_vendors = {v.lower() for v in _normalize_list(inp.vendor_cues, max_items=20)}
-    for kw in [k for k in ("zendesk","freshdesk","intercom","salesforce","hubspot","stripe","adyen","paypal","cloudflare","akamai","okta","auth0","recaptcha","google tag manager","microsoft 365")]:
+    for kw in [
+        k
+        for k in (
+            "zendesk",
+            "freshdesk",
+            "intercom",
+            "salesforce",
+            "hubspot",
+            "stripe",
+            "adyen",
+            "paypal",
+            "cloudflare",
+            "akamai",
+            "okta",
+            "auth0",
+            "recaptcha",
+            "google tag manager",
+            "microsoft 365",
+        )
+    ]:
         if kw in t.lower():
             if not any(kw in v for v in allowed_vendors):
                 return False, f"unreferenced_vendor:{kw}"
@@ -528,16 +587,15 @@ def _call_llm(*, api_key: str, model: str, inp: BriefInput, retry_hint: str = ""
         "- Include a final sentence: 'Next verification:' followed by 1-2 concrete defensive verification items.\n"
         "- No offensive instructions. No phishing templates. No ready-to-send messages.\n\n"
         "Mandatory first paragraph format (2 sentences):\n"
-        f"1) \"An external actor could {attack_type.lower()} by exploiting [mechanism from provided evidence].\"\n"
-        f"2) \"If successful, this may result in {impact_phrase}.\"\n\n"
+        f'1) "An external actor could {attack_type.lower()} by exploiting [mechanism from provided evidence]."\n'
+        f'2) "If successful, this may result in {impact_phrase}."\n\n'
         "Rules:\n"
         "- Only use the exact bundle titles / workflow node titles / cues provided in JSON.\n"
         "- Do not introduce new vendors, channels, or workflows.\n"
         "- Do not introduce a different risk type.\n"
         f"- Do not use these terms in the first paragraph: {', '.join(ABSTRACT_TERMS)}.\n"
         f"{('Retry hint: ' + retry_hint) if retry_hint else ''}\n\n"
-        "JSON context:\n"
-        + json.dumps(payload_ctx, ensure_ascii=True)
+        "JSON context:\n" + json.dumps(payload_ctx, ensure_ascii=True)
     )
     payload = {
         "model": model,
@@ -587,16 +645,21 @@ def get_or_generate_brief(db: Session, inp: BriefInput) -> str:
         )
 
     input_hash = _hash_input(inp)
-    existing = db.execute(
-        select(RiskBrief).where(
-            RiskBrief.assessment_id == inp.assessment_id,
-            RiskBrief.risk_kind == inp.risk_kind,
-            RiskBrief.risk_id == inp.risk_id,
-            RiskBrief.input_hash == input_hash,
+    existing = (
+        db.execute(
+            select(RiskBrief)
+            .where(
+                RiskBrief.assessment_id == inp.assessment_id,
+                RiskBrief.risk_kind == inp.risk_kind,
+                RiskBrief.risk_id == inp.risk_id,
+                RiskBrief.input_hash == input_hash,
+            )
+            .order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc())
+            .limit(1)
         )
-        .order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc())
-        .limit(1)
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing and (existing.brief or "").strip():
         return existing.brief
 
@@ -608,8 +671,13 @@ def get_or_generate_brief(db: Session, inp: BriefInput) -> str:
     recent = [
         str(x.brief or "")
         for x in db.execute(
-            select(RiskBrief).where(RiskBrief.assessment_id == inp.assessment_id).order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc()).limit(8)
-        ).scalars().all()
+            select(RiskBrief)
+            .where(RiskBrief.assessment_id == inp.assessment_id)
+            .order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc())
+            .limit(8)
+        )
+        .scalars()
+        .all()
         if (x.brief or "").strip()
     ]
 

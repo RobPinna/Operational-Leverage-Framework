@@ -9,14 +9,34 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.exc import OperationalError
+from starlette.middleware.sessions import SessionMiddleware
 
+from app import db as app_db
+from app import models as _models  # noqa: F401 - register SQLAlchemy models before create_all
 from app.bootstrap import ensure_default_admin
 from app.config import BASE_DIR, get_settings
-from app.db import Base, SessionLocal, engine, ensure_runtime_schema
-from app.routers import api, assessments, auth, correlations, dashboard, findings, hypotheses, mitigations, reports, risks, settings as settings_router, trust_workflows
-from src.operational_leverage_framework import get_runtime_version
+from app.routers import (
+    api,
+    assessments,
+    auth,
+    correlations,
+    dashboard,
+    findings,
+    hypotheses,
+    mitigations,
+    reports,
+    risks,
+    trust_workflows,
+)
+from app.routers import (
+    settings as settings_router,
+)
+
+try:
+    from operational_leverage_framework import get_runtime_version
+except ModuleNotFoundError:  # pragma: no cover - compatibility for non-editable local runs
+    from src.operational_leverage_framework import get_runtime_version
 
 
 def _sqlite_path_from_url(database_url: str) -> Path | None:
@@ -47,16 +67,29 @@ def _backup_sqlite_files(db_path: Path, *, reason: str, include_db: bool) -> Non
                 logging.getLogger(__name__).exception("Failed to backup sqlite file: %s", p)
 
 
+def _fresh_sqlite_fallback_url(settings, reason: str) -> str:
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    fallback_dir = settings.runtime_dir / "db_recovery"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    fallback_db = fallback_dir / f"exposuremapper_{reason}_{ts}.db"
+    return f"sqlite:///{fallback_db.as_posix()}"
+
+
+def _initialize_db_schema(database_url: str) -> None:
+    active_engine = app_db.configure_database(database_url)
+    app_db.Base.metadata.create_all(bind=active_engine)
+    app_db.ensure_runtime_schema()
+    with app_db.SessionLocal() as db:
+        ensure_default_admin(db)
+
+
 def _init_db_with_recovery(settings) -> None:
     """
     Create tables + apply runtime schema, with a pragmatic recovery path for corrupted SQLite files.
     """
     logger = logging.getLogger(__name__)
     try:
-        Base.metadata.create_all(bind=engine)
-        ensure_runtime_schema()
-        with SessionLocal() as db:
-            ensure_default_admin(db)
+        _initialize_db_schema(settings.database_url)
         return
     except OperationalError as e:
         msg = str(e).lower()
@@ -73,30 +106,42 @@ def _init_db_with_recovery(settings) -> None:
             logger.warning("SQLite disk I/O error detected. Attempting journal recovery: %s", journal)
             _backup_sqlite_files(db_path, reason="journal_recovery", include_db=False)
             try:
-                engine.dispose()
+                app_db.configure_database(settings.database_url).dispose()
             except Exception:
                 pass
-            Base.metadata.create_all(bind=engine)
-            ensure_runtime_schema()
-            with SessionLocal() as db:
-                ensure_default_admin(db)
-            return
+            try:
+                _initialize_db_schema(settings.database_url)
+                return
+            except OperationalError:
+                fallback_url = _fresh_sqlite_fallback_url(settings, reason="journal_fallback")
+                logger.warning("Journal recovery failed. Falling back to fresh SQLite database: %s", fallback_url)
+                os.environ["DATABASE_URL"] = fallback_url
+                get_settings.cache_clear()
+                _initialize_db_schema(fallback_url)
+                return
 
         # Last resort: backup DB and start a fresh one.
         logger.warning("SQLite disk I/O error detected. Backing up DB and creating a fresh database: %s", db_path)
         _backup_sqlite_files(db_path, reason="db_recreate", include_db=True)
         try:
-            engine.dispose()
+            app_db.configure_database(settings.database_url).dispose()
         except Exception:
             pass
-        Base.metadata.create_all(bind=engine)
-        ensure_runtime_schema()
-        with SessionLocal() as db:
-            ensure_default_admin(db)
-        return
+        try:
+            _initialize_db_schema(settings.database_url)
+            return
+        except OperationalError:
+            fallback_url = _fresh_sqlite_fallback_url(settings, reason="db_recreate_fallback")
+            logger.warning("DB recreate recovery failed. Falling back to fresh SQLite database: %s", fallback_url)
+            os.environ["DATABASE_URL"] = fallback_url
+            get_settings.cache_clear()
+            _initialize_db_schema(fallback_url)
+            return
 
 
 def create_app() -> FastAPI:
+    # Respect runtime env overrides (tests, packaged launcher, temporary runs).
+    get_settings.cache_clear()
     settings = get_settings()
 
     logging.basicConfig(
@@ -114,7 +159,8 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_allowed_origins or ["http://127.0.0.1", "http://localhost"],
+        allow_origin_regex=settings.cors_allow_origin_regex,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -126,6 +172,7 @@ def create_app() -> FastAPI:
     # Disable template caching and enable auto reload so UI changes are visible immediately in dev.
     # This also prevents confusing "old template still rendering" issues when iterating quickly.
     app.state.templates = Jinja2Templates(directory=str(templates_dir), auto_reload=True, cache_size=0)
+
     def _static_v(rel_path: str) -> int:
         # Cache-busting for static assets without requiring app restarts.
         # Uses file mtime for stable, deterministic versions.
