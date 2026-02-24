@@ -11,7 +11,7 @@ import re
 
 from sqlalchemy import select
 
-from app.config import BASE_DIR
+from app.config import get_settings
 from app.db import SessionLocal
 from app.models import Document
 
@@ -63,7 +63,7 @@ class _Passage:
 
 
 def _index_dir() -> Path:
-    target = BASE_DIR / "exports" / "rag_indexes"
+    target = get_settings().runtime_dir / "exports" / "rag_indexes"
     target.mkdir(parents=True, exist_ok=True)
     return target
 

@@ -11,7 +11,7 @@ import hashlib
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.config import BASE_DIR
+from app.config import get_settings
 from app.connectors import connector_map, connector_registry
 from app.connectors.base import ConnectorTarget, EvidencePayload
 from app.models import (
@@ -731,7 +731,9 @@ def export_report(db: Session, assessment: Assessment) -> Report:
     pdf_path = render_assessment_pdf(assessment, evidences, findings, mitigations)
 
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    json_path = BASE_DIR / "exports" / f"assessment_{assessment.id}_{stamp}.json"
+    export_dir = get_settings().runtime_dir / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    json_path = export_dir / f"assessment_{assessment.id}_{stamp}.json"
     export_json = {
         "assessment": {
             "id": assessment.id,

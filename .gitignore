@@ -9,15 +9,23 @@ __pycache__/
 # Local database/runtime artifacts
 *.db
 *.db-journal
+*.sqlite-journal
 *.db-wal
 *.db-shm
+*.wal
+*.shm
 data/
+logs/
 
 # Runtime export artifacts
 exports/**
 !exports/
 !exports/README.md
 !exports/.gitkeep
+
+# Build artifacts
+build/
+dist/
 
 # Local scratch artifacts
 py_write_test.txt

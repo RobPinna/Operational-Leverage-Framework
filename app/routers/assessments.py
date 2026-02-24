@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 import statistics
 
-from app.config import BASE_DIR
+from app.config import get_settings
 from app.db import get_db
 from app.dependencies import get_current_user
 from app.models import (
@@ -319,7 +319,7 @@ def delete_assessment(
             if p:
                 report_paths.append(p)
 
-    rag_index_path = BASE_DIR / "exports" / "rag_indexes" / f"assessment_{assessment_id}.json"
+    rag_index_path = get_settings().runtime_dir / "exports" / "rag_indexes" / f"assessment_{assessment_id}.json"
 
     # Historical DBs might contain duplicates or tables not wired into ORM cascades.
     # Ensure we remove dependent rows that reference assessment_id.

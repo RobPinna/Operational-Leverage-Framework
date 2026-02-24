@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.bootstrap import ensure_default_admin
 from app.config import BASE_DIR, get_settings
 from app.db import Base, SessionLocal, engine, ensure_runtime_schema
 from app.routers import api, assessments, auth, correlations, dashboard, findings, hypotheses, mitigations, reports, risks, settings as settings_router, trust_workflows
+from src.operational_leverage_framework import get_runtime_version
 
 
 def _sqlite_path_from_url(database_url: str) -> Path | None:
@@ -117,8 +119,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    static_dir = BASE_DIR / "static"
-    templates_dir = BASE_DIR / "templates"
+    bundle_dir = Path(getattr(sys, "_MEIPASS", str(BASE_DIR)))
+    static_dir = bundle_dir / "static"
+    templates_dir = bundle_dir / "templates"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     # Disable template caching and enable auto reload so UI changes are visible immediately in dev.
     # This also prevents confusing "old template still rendering" issues when iterating quickly.
@@ -152,6 +155,10 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthz():
         return {"status": "ok"}
+
+    @app.get("/api/health")
+    def api_health():
+        return {"status": "ok", "version": get_runtime_version()}
 
     return app
 

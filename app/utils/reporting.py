@@ -8,12 +8,12 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
-from app.config import BASE_DIR
+from app.config import get_settings
 from app.models import Assessment, Evidence, Finding, Mitigation
 from app.utils.jsonx import from_json
 
 
-EXPORT_DIR = BASE_DIR / "exports"
+EXPORT_DIR = get_settings().runtime_dir / "exports"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
