@@ -26,6 +26,7 @@ exports/**
 # Build artifacts
 build/
 dist/
+dist_release/
 
 # Local scratch artifacts
 py_write_test.txt

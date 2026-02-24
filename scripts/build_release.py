@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import os
 import shutil
@@ -12,6 +13,7 @@ SPEC_PATH = ROOT_DIR / "OperationalLeverageFramework.spec"
 DIST_DIR = ROOT_DIR / "dist"
 DIST_RELEASE_DIR = ROOT_DIR / "dist_release"
 ARTIFACT_BASENAME = "OperationalLeverageFramework"
+REQUIRED_RUNTIME_MODULES = ("fastapi", "uvicorn", "itsdangerous")
 
 
 def _format_cmd(cmd: list[str]) -> str:
@@ -43,15 +45,30 @@ def _ensure_pyinstaller() -> None:
         print(f"PyInstaller {version}")
 
 
+def _ensure_runtime_modules() -> None:
+    missing = [name for name in REQUIRED_RUNTIME_MODULES if importlib.util.find_spec(name) is None]
+    if missing:
+        print(
+            "error: missing runtime dependencies in current Python environment: "
+            + ", ".join(missing),
+            file=sys.stderr,
+        )
+        print(
+            "hint: run `python -m pip install -e \".[dev]\"` (or install requirements.txt) before building.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def _resolve_built_artifact() -> Path:
+    onefolder = DIST_DIR / ARTIFACT_BASENAME
+    if onefolder.exists():
+        return onefolder
+
     exe_suffix = ".exe" if os.name == "nt" else ""
     onefile = DIST_DIR / f"{ARTIFACT_BASENAME}{exe_suffix}"
     if onefile.exists():
         return onefile
-
-    onefolder = DIST_DIR / ARTIFACT_BASENAME
-    if onefolder.exists():
-        return onefolder
 
     matches = sorted(DIST_DIR.glob(f"{ARTIFACT_BASENAME}*"))
     if matches:
@@ -83,6 +100,9 @@ def main() -> int:
         return 1
 
     _ensure_pyinstaller()
+    _ensure_runtime_modules()
+    if DIST_DIR.exists():
+        shutil.rmtree(DIST_DIR, ignore_errors=True)
     build = _run([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(SPEC_PATH)])
     if build.returncode != 0:
         return build.returncode

@@ -1118,6 +1118,36 @@ def _filter_evidence_relevance(
                     }
                 )
 
+    # Graceful fallback: if strict anchor/score matching rejects everything,
+    # keep the best available items (still bounded) so the risk pipeline can
+    # produce watchlist scenarios instead of an empty output.
+    if not accepted:
+        candidates = [
+            ev
+            for ev in (evidence_refs or [])
+            if (not bool(ev.is_boilerplate)) and float(ev.weight or 0.0) >= 0.25
+        ]
+        if not candidates:
+            candidates = [ev for ev in (evidence_refs or []) if not bool(ev.is_boilerplate)]
+        if not candidates:
+            candidates = list(evidence_refs or [])
+
+        if candidates:
+            candidates = sorted(candidates, key=lambda x: float(x.score or 0.0), reverse=True)
+            soft_min = (0.50 * top1) if top1 > 0 else 0.0
+            soft = [ev for ev in candidates if (float(ev.score or 0.0) >= soft_min if soft_min > 0 else True)]
+            chosen = soft if soft else candidates
+            accepted = chosen[: max(2, min(8, len(chosen)))]
+            if admin_debug:
+                for ev in accepted:
+                    ev.relevance_debug = {
+                        "accepted": True,
+                        "mode": "relaxed_fallback",
+                        "score": round(float(ev.score or 0.0), 4),
+                        "top1_score": round(top1, 4),
+                        "min_score_soft": round(soft_min, 4),
+                    }
+
     debug_blob = None
     if admin_debug:
         debug_blob = {
@@ -1126,6 +1156,7 @@ def _filter_evidence_relevance(
             "top1_score": round(top1, 4),
             "min_score": round(min_score, 4),
             "accepted": len(accepted),
+            "accepted_mode": "strict_or_relaxed",
             "rejected": rejected_debug[:25],
         }
     return accepted[:8], debug_blob
@@ -2052,6 +2083,21 @@ def generate_hypotheses(
                 evidence_count=int(weighted_count),
                 avg_confidence=int(conf_score),
             )
+            if allow_local_fallback and filtered:
+                # Keep weak scenarios as watchlist candidates instead of returning no risks.
+                if isinstance(meta, dict):
+                    meta["relaxed_gate"] = "weighted_count_lt_2"
+                candidates.append(
+                    _ScenarioCandidate(
+                        query_id=query_id,
+                        query_text=query_text,
+                        payload=payload,
+                        evidence_refs=filtered,
+                        conf_score=int(conf_score),
+                        meta=meta,
+                        relevance_debug=rel_debug,
+                    )
+                )
             continue
         if conf_score < threshold:
             _save_gap(
@@ -2065,6 +2111,20 @@ def generate_hypotheses(
                 evidence_count=len(filtered),
                 avg_confidence=int(conf_score),
             )
+            if allow_local_fallback and filtered:
+                if isinstance(meta, dict):
+                    meta["relaxed_gate"] = "confidence_below_threshold"
+                candidates.append(
+                    _ScenarioCandidate(
+                        query_id=query_id,
+                        query_text=query_text,
+                        payload=payload,
+                        evidence_refs=filtered,
+                        conf_score=int(conf_score),
+                        meta=meta,
+                        relevance_debug=rel_debug,
+                    )
+                )
             continue
 
         candidates.append(

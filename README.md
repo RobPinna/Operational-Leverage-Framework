@@ -39,6 +39,15 @@ python scripts/clean_release.py
 ## Optional Configuration
 Create `.env` from `.env.example` only if you want to override defaults (for example stable secrets, custom runtime dir, API keys).
 
+Key placeholders available in `.env.example`:
+
+```env
+SECRET_KEY=change-me-exposuremapper-secret
+PASSWORD_PEPPER=change-me-password-pepper
+API_KEY_PEPPER=change-me-api-key-pepper
+DEFAULT_ADMIN_PASSWORD=change-me-admin-password
+```
+
 ## Troubleshooting
 - Browser does not open automatically: use the URL printed in console.
 - OpenAI-related errors: set `OPENAI_API_KEY` in `.env` or leave empty for local/offline mode.

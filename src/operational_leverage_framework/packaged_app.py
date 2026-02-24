@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import socket
+import tempfile
 import threading
 import time
 import urllib.request
@@ -9,7 +11,6 @@ from pathlib import Path
 
 import uvicorn
 
-from app.config import get_settings
 from src.operational_leverage_framework import get_runtime_version
 
 
@@ -59,22 +60,51 @@ def _open_browser_when_ready(url: str, health_url: str, timeout_seconds: float =
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _resolve_runtime_dir() -> Path:
+    configured = os.getenv("RUNTIME_DIR", "").strip()
+    if configured:
+        candidates = [Path(configured).expanduser()]
+    else:
+        candidates = []
+
+    local_appdata = os.getenv("LOCALAPPDATA", "").strip()
+    if local_appdata:
+        candidates.append(Path(local_appdata) / "OperationalLeverageFramework" / "data")
+    candidates.append(Path.home() / ".operational_leverage_framework" / "data")
+    candidates.append(Path(tempfile.gettempdir()) / "OperationalLeverageFramework" / "data")
+
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            return candidate
+        except OSError:
+            continue
+    raise RuntimeError("Unable to create a writable runtime data directory.")
+
+
+def _configure_runtime_env() -> Path:
+    runtime_dir = _resolve_runtime_dir()
+    os.environ.setdefault("RUNTIME_DIR", str(runtime_dir))
+    db_path = runtime_dir / "exposuremapper.db"
+    os.environ.setdefault("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    return runtime_dir
+
+
 def main() -> int:
-    settings = get_settings()
-    data_dir = Path(settings.runtime_dir).expanduser()
-    data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = _configure_runtime_env()
+    from app.main import app as fastapi_app
 
     port = _find_port(PREFERRED_PORT)
     base_url = f"http://{HOST}:{port}"
     version = get_runtime_version()
-    print(f"Version: {version}")
-    print(f"Web UI: {base_url}/")
-    print(f"Data dir: {data_dir.resolve()}")
-    print(f"App import path: {APP_IMPORT_PATH}")
+    print(f"Version: {version}", flush=True)
+    print(f"Web UI: {base_url}/", flush=True)
+    print(f"Data dir: {data_dir.resolve()}", flush=True)
+    print(f"App import path: {APP_IMPORT_PATH}", flush=True)
 
     _open_browser_when_ready(base_url + "/", base_url + "/healthz")
     uvicorn.run(
-        APP_IMPORT_PATH,
+        fastapi_app,
         host=HOST,
         port=port,
         reload=False,
