@@ -7,6 +7,7 @@ from app.db import get_db
 from app.dependencies import get_current_user
 from app.models import Assessment, Hypothesis, SocialTrustNode
 from app.services.assessment_service import get_rag_advanced_state
+from app.services.progress_tracker import fail_progress, finish_progress, start_progress, update_progress
 from app.services.trust_workflows import (
     generate_trust_workflow_map,
     list_trust_workflow_nodes,
@@ -51,11 +52,18 @@ def trust_workflow_generate(
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
 
-    rag_cfg = get_rag_advanced_state(db)
-    generate_trust_workflow_map(
-        db,
-        assessment_id,
-        top_k=int(rag_cfg.get("top_k", 4)),
-        min_ratio=float(rag_cfg.get("min_ratio", 0.70)),
-    )
+    start_progress(assessment_id, "assess", "Preparing workflow trust map...")
+    try:
+        rag_cfg = get_rag_advanced_state(db)
+        update_progress(assessment_id, "assess", "Analyzing workflow signals and trust friction...")
+        generate_trust_workflow_map(
+            db,
+            assessment_id,
+            top_k=int(rag_cfg.get("top_k", 4)),
+            min_ratio=float(rag_cfg.get("min_ratio", 0.70)),
+        )
+        finish_progress(assessment_id, "assess", "Workflow trust map ready.")
+    except Exception as exc:
+        fail_progress(assessment_id, "assess", f"{exc.__class__.__name__}: {exc}")
+        raise
     return RedirectResponse(url=f"/assessments/{assessment_id}/risks?view=workflow", status_code=302)

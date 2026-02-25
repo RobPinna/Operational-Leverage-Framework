@@ -31,6 +31,7 @@ from app.security import deobfuscate_secret, obfuscate_secret
 from app.services.cross_signal import build_cross_signal_correlations
 from app.services.collector_v2 import collect_documents
 from app.services.evidence_quality_classifier import classify_evidence
+from app.services.progress_tracker import finish_progress, start_progress, update_progress
 from app.utils.demo_seed import generate_demo_documents, generate_demo_evidence
 from app.utils.graphing import build_edges_for_persisted_nodes, rebuild_graph
 from app.utils.jsonx import from_json, to_json
@@ -332,6 +333,7 @@ def _get_api_key(db: Session, connector_name: str) -> str | None:
 
 
 def run_collection(db: Session, assessment: Assessment) -> list[str]:
+    start_progress(assessment.id, "collect", "Initializing collection workspace...")
     cmap = connector_map()
 
     def examination_logger(**kwargs):
@@ -359,6 +361,7 @@ def run_collection(db: Session, assessment: Assessment) -> list[str]:
         "job_postings_live",
     }
     if any(name in selected for name in document_based_connectors):
+        update_progress(assessment.id, "collect", "Crawling and parsing public documents...")
         docs = collect_documents(assessment.id, db=db)
         logs.append(f"collector_v2: created/updated {len(docs)} documents")
         log_examination_event(
@@ -372,6 +375,7 @@ def run_collection(db: Session, assessment: Assessment) -> list[str]:
             fetched_at=datetime.utcnow(),
         )
         try:
+            update_progress(assessment.id, "collect", "Building retrieval index from collected documents...")
             rag_meta = build_rag_index(assessment.id)
             logs.append(
                 f"rag_index: documents={rag_meta.get('num_documents', 0)} passages={rag_meta.get('num_passages', 0)}"
@@ -401,10 +405,12 @@ def run_collection(db: Session, assessment: Assessment) -> list[str]:
             )
 
     # Clear previous collection for idempotent step rerun
+    update_progress(assessment.id, "collect", "Refreshing normalized evidence store...")
     db.execute(delete(Evidence).where(Evidence.assessment_id == assessment.id))
     db.commit()
 
     for name in selected:
+        update_progress(assessment.id, "collect", f"Running connector: {name}...")
         connector = cmap.get(name)
         if not connector:
             logs.append(f"{name}: skipped (not registered)")
@@ -518,6 +524,7 @@ def run_collection(db: Session, assessment: Assessment) -> list[str]:
             assessment.id,
         )
 
+    update_progress(assessment.id, "collect", "Correlating cross-signal findings...")
     correlation_count = build_cross_signal_correlations(db, assessment)
     logs.append(f"cross_signal_correlation: generated {correlation_count} correlations")
     log_examination_event(
@@ -536,6 +543,7 @@ def run_collection(db: Session, assessment: Assessment) -> list[str]:
     assessment.collect_log_json = to_json(logs)
     assessment.updated_at = datetime.utcnow()
     db.commit()
+    finish_progress(assessment.id, "collect", "Collection complete.")
 
     return logs
 
@@ -616,6 +624,7 @@ def _build_findings_from_evidence(assessment: Assessment, evidences: list[Eviden
 
 
 def build_model(db: Session, assessment: Assessment) -> dict:
+    start_progress(assessment.id, "model", "Loading evidence for graph modeling...")
     evidences = (
         db.execute(select(Evidence).where(Evidence.assessment_id == assessment.id).order_by(Evidence.confidence.desc()))
         .scalars()
@@ -627,6 +636,7 @@ def build_model(db: Session, assessment: Assessment) -> dict:
     db.execute(delete(Finding).where(Finding.assessment_id == assessment.id))
     db.commit()
 
+    update_progress(assessment.id, "model", "Rebuilding relationship graph...")
     draft_nodes, _ = rebuild_graph(assessment, evidences)
     db.add_all(draft_nodes)
     db.commit()
@@ -635,6 +645,7 @@ def build_model(db: Session, assessment: Assessment) -> dict:
     edges = build_edges_for_persisted_nodes(assessment.id, nodes)
     db.add_all(edges)
 
+    update_progress(assessment.id, "model", "Deriving prioritized findings...")
     findings = _build_findings_from_evidence(assessment, evidences)
     db.add_all(findings)
 
@@ -643,6 +654,7 @@ def build_model(db: Session, assessment: Assessment) -> dict:
     assessment.wizard_step = max(assessment.wizard_step, 5)
     assessment.updated_at = datetime.utcnow()
     db.commit()
+    finish_progress(assessment.id, "model", "Risk model complete.")
     logger.info(
         "Model built for assessment %s: nodes=%s edges=%s findings=%s",
         assessment.id,
@@ -735,6 +747,7 @@ def build_mitigations(db: Session, assessment: Assessment) -> int:
 
 
 def export_report(db: Session, assessment: Assessment) -> Report:
+    start_progress(assessment.id, "report", "Collecting report inputs...")
     evidences = db.execute(select(Evidence).where(Evidence.assessment_id == assessment.id)).scalars().all()
     findings = db.execute(select(Finding).where(Finding.assessment_id == assessment.id)).scalars().all()
     mitigations = db.execute(select(Mitigation).where(Mitigation.assessment_id == assessment.id)).scalars().all()
@@ -744,6 +757,7 @@ def export_report(db: Session, assessment: Assessment) -> Report:
         .all()
     )
 
+    update_progress(assessment.id, "report", "Rendering PDF report...")
     pdf_path = render_assessment_pdf(assessment, evidences, findings, mitigations)
 
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -812,6 +826,7 @@ def export_report(db: Session, assessment: Assessment) -> Report:
             for c in correlations
         ],
     }
+    update_progress(assessment.id, "report", "Writing JSON export package...")
     Path(json_path).write_text(to_json(export_json), encoding="utf-8")
 
     report = Report(assessment_id=assessment.id, pdf_path=str(pdf_path), json_path=str(json_path))
@@ -821,6 +836,7 @@ def export_report(db: Session, assessment: Assessment) -> Report:
     assessment.wizard_step = max(assessment.wizard_step, 7)
     assessment.updated_at = datetime.utcnow()
     db.commit()
+    finish_progress(assessment.id, "report", "Report package ready.")
     db.refresh(report)
     logger.info("Report exported for assessment %s: %s", assessment.id, report.pdf_path)
     return report

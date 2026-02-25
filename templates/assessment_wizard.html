@@ -41,22 +41,22 @@
           {% if assessment %}<input type="hidden" name="assessment_id" value="{{ assessment.id }}" />{% endif %}
           <div>
             <label class="text-sm text-slate-300">Company/Org Name</label>
-            <input class="input-dark mt-1" name="company_name" value="{{ assessment.company_name if assessment else '' }}" required />
+            <input class="input-dark mt-1" name="company_name" value="{{ assessment.company_name if assessment else prefill.company_name }}" required />
           </div>
           <div>
             <label class="text-sm text-slate-300">Domain</label>
-            <input class="input-dark mt-1" name="domain" value="{{ assessment.domain if assessment else '' }}" placeholder="example.org" required />
+            <input class="input-dark mt-1" name="domain" value="{{ assessment.domain if assessment else prefill.domain }}" placeholder="example.org" required />
           </div>
           <div>
             <label class="text-sm text-slate-300">Sector</label>
-            <input class="input-dark mt-1" name="sector" value="{{ assessment.sector if assessment else '' }}" />
+            <input class="input-dark mt-1" name="sector" value="{{ assessment.sector if assessment else prefill.sector }}" />
           </div>
           <div>
             <label class="text-sm text-slate-300">Regions</label>
-            <input class="input-dark mt-1" name="regions" value="{{ assessment.regions if assessment else '' }}" placeholder="MENA, EU" />
+            <input class="input-dark mt-1" name="regions" value="{{ assessment.regions if assessment else prefill.regions }}" placeholder="MENA, EU" />
           </div>
           <label class="text-sm text-slate-300 flex items-center gap-2 md:col-span-2">
-            <input type="checkbox" name="demo_mode" {% if assessment and assessment.demo_mode %}checked{% endif %} />
+            <input type="checkbox" name="demo_mode" {% if (assessment and assessment.demo_mode) or ((not assessment) and prefill.demo_mode) %}checked{% endif %} />
             Enable Demo Mode
           </label>
           <div class="md:col-span-2"><button class="btn-primary" type="submit">Save Target</button></div>

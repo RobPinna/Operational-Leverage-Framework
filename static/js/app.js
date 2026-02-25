@@ -96,45 +96,17 @@ function initLoadingOverlay() {
   const status = document.getElementById('loadingStatus');
   if (!overlay || !status) return;
 
-  const msgSets = {
-    collect: [
-      'Discovering relevant pages…',
-      'Crawling key pages…',
-      'Rendering dynamic pages (if needed)…',
-      'Downloading PDFs…',
-      'Scanning PDF contents…',
-      'Crawling job postings…',
-      'Enumerating subdomains…',
-      'Resolving DNS footprint…',
-      'Detecting website vendors…',
-      'Correlating signals…',
-    ],
-    model: [
-      'Normalizing evidence…',
-      'Building findings model…',
-      'Extracting public exposure signals…',
-      'Prioritizing findings…',
-    ],
-    assess: [
-      'Building local retrieval index…',
-      'Retrieving top evidence passages…',
-      'Generating risk scenarios…',
-      'Scoring confidence and impact…',
-    ],
-    report: [
-      'Rendering PDF report…',
-      'Packaging JSON export…',
-      'Finalizing assessment artifacts…',
-    ],
-    default: [
-      'Working…',
-      'Please wait…',
-    ],
+  const initialMsg = {
+    collect: 'Starting collection...',
+    model: 'Starting model build...',
+    assess: 'Starting risk assessment...',
+    report: 'Starting report generation...',
+    default: 'Working...',
   };
 
-  let timer = null;
-  let idx = 0;
-  let current = msgSets.default;
+  let pollTimer = null;
+  let activeRequestId = 0;
+  let activeRequestStartedAtMs = 0;
 
   function setMsg(text) {
     status.textContent = text;
@@ -145,22 +117,69 @@ function initLoadingOverlay() {
     status.classList.add('animate');
   }
 
-  function show(mode) {
-    current = msgSets[String(mode || '').trim()] || msgSets.default;
-    idx = 0;
+  function resolveAssessmentId(form) {
+    const hidden = form.querySelector('input[name="assessment_id"]');
+    if (hidden && /^\d+$/.test(String(hidden.value || '').trim())) {
+      return Number(hidden.value);
+    }
+    const action = String(form.getAttribute('action') || '');
+    const match = action.match(/\/assessments\/(\d+)/i);
+    if (match && match[1]) {
+      return Number(match[1]);
+    }
+    return null;
+  }
+
+  function stopPolling() {
+    if (pollTimer) window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  async function pollProgress(assessmentId, mode, requestId, startedAtMs) {
+    if (!assessmentId || requestId !== activeRequestId) return;
+    try {
+      const url = `/assessments/${assessmentId}/progress?mode=${encodeURIComponent(mode)}`;
+      const res = await fetch(url, { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (!res.ok || requestId !== activeRequestId) return;
+      const data = await res.json();
+      const updatedAt = Date.parse(String((data && data.updated_at) || ''));
+      if (Number.isFinite(updatedAt) && Number.isFinite(startedAtMs) && updatedAt < (startedAtMs - 250)) {
+        // Ignore stale state left from a previous run of the same mode.
+        return;
+      }
+      const message = String((data && data.message) || '').trim();
+      if (message) setMsg(message);
+      if (data && data.done) {
+        if (!data.success && data.error) {
+          setMsg(`Failed: ${String(data.error).slice(0, 120)}`);
+        }
+        stopPolling();
+      }
+    } catch (_err) {
+      // Keep current message on transient polling failures.
+    }
+  }
+
+  function show(mode, assessmentId = null) {
+    const modeKey = String(mode || 'default').trim() || 'default';
+    const firstMsg = initialMsg[modeKey] || initialMsg.default;
     overlay.classList.remove('hidden');
     overlay.setAttribute('aria-hidden', 'false');
-    setMsg(current[0] || 'Working…');
-    if (timer) window.clearInterval(timer);
-    timer = window.setInterval(() => {
-      idx = (idx + 1) % current.length;
-      setMsg(current[idx] || 'Working…');
-    }, 2200);
+    setMsg(firstMsg);
+
+    activeRequestId += 1;
+    activeRequestStartedAtMs = Date.now();
+    stopPolling();
+    if (!assessmentId || !Number.isFinite(assessmentId)) return;
+
+    pollProgress(assessmentId, modeKey, activeRequestId, activeRequestStartedAtMs);
+    pollTimer = window.setInterval(() => {
+      pollProgress(assessmentId, modeKey, activeRequestId, activeRequestStartedAtMs);
+    }, 900);
   }
 
   function hide() {
-    if (timer) window.clearInterval(timer);
-    timer = null;
+    stopPolling();
     overlay.classList.add('hidden');
     overlay.setAttribute('aria-hidden', 'true');
   }
@@ -172,7 +191,8 @@ function initLoadingOverlay() {
   document.querySelectorAll('form[data-loading]').forEach((form) => {
     form.addEventListener('submit', () => {
       const mode = form.getAttribute('data-loading') || 'default';
-      show(mode);
+      const assessmentId = resolveAssessmentId(form);
+      show(mode, assessmentId);
     });
   });
 }

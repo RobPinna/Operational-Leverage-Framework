@@ -5,7 +5,7 @@
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <div>
       <h1 class="workspace-page-title">Assessments</h1>
-      <p class="workspace-page-subtitle">Structured external abuse-path modeling based on public operational signals.</p>
+      <p class="workspace-page-subtitle">History grouped by target. Total score is a risk posture index (higher = worse).</p>
     </div>
     <a href="/assessments/new" class="btn-primary">New Assessment</a>
   </div>
@@ -15,42 +15,74 @@
     <button type="submit" class="btn-ghost">Search</button>
   </form>
 
-  <div class="panel p-5 mt-7 overflow-x-auto">
+  {% for group in company_groups %}
+  <section class="panel p-5 mt-6 overflow-x-auto">
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <h3 class="text-white font-semibold">{{ group.company_name }}</h3>
+        <p class="text-xs text-slate-400">{{ group.history|length }} assessment(s) in chronological order.</p>
+      </div>
+      {% if group.prefill_assessment_id %}
+      <a class="btn-ghost text-xs" href="/assessments/new?prefill_assessment_id={{ group.prefill_assessment_id }}">New Assessment</a>
+      {% endif %}
+    </div>
+
     <table class="min-w-full text-sm">
       <thead class="text-slate-300 border-b border-slate-700">
         <tr>
-          <th class="text-left p-4">ID</th>
-          <th class="text-left p-4">Company</th>
-          <th class="text-left p-4">Domain</th>
-          <th class="text-left p-4">Status</th>
-          <th class="text-left p-4">Updated</th>
-          <th class="text-left p-4">Actions</th>
+          <th class="text-left p-3">Assessment</th>
+          <th class="text-left p-3">ID</th>
+          <th class="text-left p-3">Domain</th>
+          <th class="text-left p-3">Date</th>
+          <th class="text-left p-3">Total Score</th>
+          <th class="text-left p-3">Delta</th>
+          <th class="text-left p-3">Risk Mix</th>
+          <th class="text-left p-3">Status</th>
+          <th class="text-left p-3">Actions</th>
         </tr>
       </thead>
       <tbody>
-        {% for a in assessments %}
-        <tr class="border-b border-slate-800/80">
-          <td class="p-4">#{{ a.id }}</td>
-          <td class="p-4 text-white">{{ a.company_name }}</td>
-          <td class="p-4">{{ a.domain }}</td>
-          <td class="p-4"><span class="badge">{{ a.status }}</span></td>
-          <td class="p-4">{{ a.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td class="p-4">
+        {% for h in group.history %}
+        <tr class="border-b border-slate-800/80 {% if loop.last %}bg-slate-900/40{% endif %}">
+          <td class="p-3 text-white">{{ h.name }}</td>
+          <td class="p-3">#{{ h.id }}</td>
+          <td class="p-3">{{ h.domain }}</td>
+          <td class="p-3">{{ h.created_at.strftime('%Y-%m-%d %H:%M') if h.created_at else (h.updated_at.strftime('%Y-%m-%d %H:%M') if h.updated_at else '-') }}</td>
+          <td class="p-3">
+            <span class="badge">{{ h.total_score }}/100</span>
+          </td>
+          <td class="p-3">
+            {% if h.delta_score is none %}
+            <span class="text-slate-500">-</span>
+            {% elif h.delta_score < 0 %}
+            <span class="text-emerald-300">{{ h.delta_score }}</span>
+            {% elif h.delta_score > 0 %}
+            <span class="text-red-300">+{{ h.delta_score }}</span>
+            {% else %}
+            <span class="text-slate-300">0</span>
+            {% endif %}
+          </td>
+          <td class="p-3">
+            <span class="text-xs text-slate-300">E {{ h.elevated }} - W {{ h.watchlist }} - B {{ h.baseline }}</span>
+          </td>
+          <td class="p-3"><span class="badge">{{ h.status }}</span></td>
+          <td class="p-3">
             <div class="flex gap-3 flex-wrap">
-              <a class="text-cyan-300 hover:text-cyan-200" href="/assessments/{{ a.id }}/overview">Open Context</a>
-              <a class="text-cyan-300 hover:text-cyan-200" href="/assessments/new?assessment_id={{ a.id }}">Open Wizard</a>
-              <form method="post" action="/assessments/{{ a.id }}/delete"
-                onsubmit="return confirm('Delete assessment {{ a.company_name }} (#{{ a.id }})? This will remove documents, evidence, risks, logs, and reports.');">
+              <a class="text-cyan-300 hover:text-cyan-200" href="/assessments/{{ h.id }}/overview">Open Context</a>
+              <a class="text-cyan-300 hover:text-cyan-200" href="/assessments/new?assessment_id={{ h.id }}">Open Wizard</a>
+              <form method="post" action="/assessments/{{ h.id }}/delete"
+                onsubmit="return confirm('Delete assessment {{ h.name }} (#{{ h.id }})? This will remove documents, evidence, risks, logs, and reports.');">
                 <button type="submit" class="text-red-300 hover:text-red-200 font-semibold">Delete</button>
               </form>
             </div>
           </td>
         </tr>
-        {% else %}
-        <tr><td colspan="6" class="p-6 text-slate-500">No assessments yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
-  </div>
+  </section>
+  {% else %}
+  <div class="panel p-6 text-slate-500 mt-6">No assessments yet.</div>
+  {% endfor %}
 </div>
 {% endblock %}

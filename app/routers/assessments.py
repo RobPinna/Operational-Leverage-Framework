@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from pathlib import Path
@@ -39,6 +41,7 @@ from app.services.assessment_service import (
     save_selected_sources,
     update_assessment_target,
 )
+from app.services.progress_tracker import fail_progress, finish_progress, get_progress, start_progress, update_progress
 from app.utils.jsonx import from_json
 from app.services.risk_brief_service import BriefInput, get_or_generate_brief
 from src.rag.index import build_index as build_rag_index
@@ -49,6 +52,32 @@ from src.reasoner.hypotheses import generate_hypotheses
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
 logger = logging.getLogger(__name__)
+
+
+def _assessment_group_key(company_name: str, domain: str) -> str:
+    company = " ".join(str(company_name or "").split()).strip().lower()
+    if company:
+        return company
+    return " ".join(str(domain or "").split()).strip().lower() or "__unknown__"
+
+
+def _assessment_display_name(company_name: str, domain: str) -> str:
+    company = " ".join(str(company_name or "").split()).strip()
+    if company:
+        return company
+    domain_clean = " ".join(str(domain or "").split()).strip()
+    return domain_clean or "Unnamed target"
+
+
+def _status_factor(status: str) -> float:
+    key = str(status or "").strip().upper()
+    if key == "ELEVATED":
+        return 1.0
+    if key == "WATCHLIST":
+        return 0.55
+    if key == "BASELINE":
+        return 0.25
+    return 0.4
 
 
 def _assessment_context(assessment: Assessment) -> dict:
@@ -292,16 +321,141 @@ def assessments_list(
         stmt = stmt.where(Assessment.company_name.ilike(like) | Assessment.domain.ilike(like))
 
     rows = db.execute(stmt).scalars().all()
+    assessment_ids = [int(a.id) for a in rows]
+    score_candidates: dict[int, list[float]] = defaultdict(list)
+    status_counts: dict[int, dict[str, int]] = defaultdict(lambda: {"ELEVATED": 0, "WATCHLIST": 0, "BASELINE": 0})
+    if assessment_ids:
+        score_rows = db.execute(
+            select(
+                Hypothesis.assessment_id,
+                Hypothesis.status,
+                Hypothesis.potential_impact_score,
+                Hypothesis.plausibility_score,
+                Hypothesis.confidence,
+            ).where(Hypothesis.assessment_id.in_(assessment_ids))
+        ).all()
+        for assessment_id, status, potential_impact, plausibility, confidence in score_rows:
+            aid = int(assessment_id or 0)
+            st = str(status or "").strip().upper()
+            if st not in status_counts[aid]:
+                st = "WATCHLIST"
+            status_counts[aid][st] = int(status_counts[aid].get(st, 0) or 0) + 1
+            impact_score = max(0, min(100, int(potential_impact or 0)))
+            plausibility_score = max(0, min(100, int(plausibility or 0)))
+            confidence_score = max(0, min(100, int(confidence or 0)))
+            base_score = (0.45 * impact_score) + (0.35 * plausibility_score) + (0.20 * confidence_score)
+            score_candidates[aid].append(base_score * _status_factor(st))
+
+    assessment_metrics: dict[int, dict[str, int]] = {}
+    for aid in assessment_ids:
+        candidates = sorted(score_candidates.get(aid, []), reverse=True)[:5]
+        total_score = int(round(sum(candidates) / len(candidates))) if candidates else 0
+        counts = status_counts.get(aid, {"ELEVATED": 0, "WATCHLIST": 0, "BASELINE": 0})
+        assessment_metrics[aid] = {
+            "total_score": int(max(0, min(100, total_score))),
+            "elevated": int(counts.get("ELEVATED", 0) or 0),
+            "watchlist": int(counts.get("WATCHLIST", 0) or 0),
+            "baseline": int(counts.get("BASELINE", 0) or 0),
+        }
+
+    grouped_rows: dict[str, dict] = {}
+    for row in rows:
+        key = _assessment_group_key(row.company_name, row.domain)
+        group = grouped_rows.setdefault(
+            key,
+            {
+                "company_name": _assessment_display_name(row.company_name, row.domain),
+                "items": [],
+            },
+        )
+        group["items"].append(row)
+
+    company_groups: list[dict] = []
+    for group in grouped_rows.values():
+        history = sorted(
+            list(group.get("items") or []),
+            key=lambda a: (a.created_at or a.updated_at or datetime.min, int(a.id or 0)),
+        )
+        history_rows: list[dict] = []
+        prev_score: int | None = None
+        for idx, a in enumerate(history, start=1):
+            metric = assessment_metrics.get(int(a.id), {"total_score": 0, "elevated": 0, "watchlist": 0, "baseline": 0})
+            total_score = int(metric.get("total_score", 0) or 0)
+            delta = None if prev_score is None else int(total_score - prev_score)
+            assessment_date = a.created_at or a.updated_at
+            date_label = assessment_date.strftime("%Y-%m-%d") if assessment_date else "undated"
+            trend = "initial"
+            if delta is not None:
+                if delta > 0:
+                    trend = "worse"
+                elif delta < 0:
+                    trend = "improved"
+                else:
+                    trend = "stable"
+            history_rows.append(
+                {
+                    "id": int(a.id),
+                    "name": f"Assessment {idx} ({date_label})",
+                    "company_name": str(a.company_name or ""),
+                    "domain": str(a.domain or ""),
+                    "status": str(a.status or ""),
+                    "created_at": a.created_at,
+                    "updated_at": a.updated_at,
+                    "total_score": total_score,
+                    "delta_score": delta,
+                    "delta_trend": trend,
+                    "elevated": int(metric.get("elevated", 0) or 0),
+                    "watchlist": int(metric.get("watchlist", 0) or 0),
+                    "baseline": int(metric.get("baseline", 0) or 0),
+                }
+            )
+            prev_score = total_score
+        latest_updated = max((row["updated_at"] for row in history_rows if row.get("updated_at")), default=datetime.min)
+        company_groups.append(
+            {
+                "company_name": str(group.get("company_name") or "Unnamed target"),
+                "history": history_rows,
+                "latest_updated": latest_updated,
+                "prefill_assessment_id": int(history[-1].id) if history else None,
+            }
+        )
+    company_groups.sort(key=lambda g: g.get("latest_updated") or datetime.min, reverse=True)
+
     return request.app.state.templates.TemplateResponse(
         "assessments_list.html",
         {
             "request": request,
             "user": user,
             "active": "assessments",
-            "assessments": rows,
+            "company_groups": company_groups,
             "q": q,
         },
     )
+
+
+@router.get("/{assessment_id}/progress")
+def assessment_progress(
+    assessment_id: int,
+    mode: str = Query(default=""),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    assessment = get_assessment(db, assessment_id)
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    mode_key = (mode or "").strip().lower() or "default"
+    payload = get_progress(assessment.id, mode_key)
+    if not str(payload.get("message", "")).strip():
+        defaults = {
+            "collect": "Collection is preparing...",
+            "model": "Modeling is preparing...",
+            "assess": "Risk generation is preparing...",
+            "report": "Report generation is preparing...",
+            "default": "Working...",
+        }
+        payload["message"] = defaults.get(mode_key, "Working...")
+    return payload
 
 
 @router.post("/{assessment_id}/delete")
@@ -356,10 +510,28 @@ def delete_assessment(
 def new_assessment_wizard(
     request: Request,
     assessment_id: int | None = Query(default=None),
+    prefill_assessment_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     assessment = get_assessment(db, assessment_id) if assessment_id else None
+    prefill: dict[str, str | bool] = {
+        "company_name": "",
+        "domain": "",
+        "sector": "",
+        "regions": "",
+        "demo_mode": False,
+    }
+    if not assessment and prefill_assessment_id:
+        seed = get_assessment(db, prefill_assessment_id)
+        if seed:
+            prefill = {
+                "company_name": str(seed.company_name or "").strip(),
+                "domain": str(seed.domain or "").strip(),
+                "sector": str(seed.sector or "").strip(),
+                "regions": str(seed.regions or "").strip(),
+                "demo_mode": bool(seed.demo_mode),
+            }
     connector_states = list_connector_states(db)
     display_step = 1
 
@@ -420,6 +592,7 @@ def new_assessment_wizard(
             "assessment_context": _assessment_context(assessment) if assessment else None,
             "section_title": "New Assessment",
             "step": display_step,
+            "prefill": prefill,
             "connector_states": connector_states,
             "selected_sources": from_json(assessment.selected_sources_json, []) if assessment else [],
             "collect_logs": from_json(assessment.collect_log_json, []) if assessment else [],
@@ -514,7 +687,11 @@ def collect_from_overview(
     assessment = get_assessment(db, assessment_id)
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
-    run_collection(db, assessment)
+    try:
+        run_collection(db, assessment)
+    except Exception as exc:
+        fail_progress(assessment.id, "collect", f"{exc.__class__.__name__}: {exc}")
+        raise
     return RedirectResponse(url=f"/assessments/{assessment_id}/overview", status_code=302)
 
 
@@ -527,7 +704,11 @@ def export_pdf_from_overview(
     assessment = get_assessment(db, assessment_id)
     if not assessment:
         return RedirectResponse(url="/assessments", status_code=302)
-    report = export_report(db, assessment)
+    try:
+        report = export_report(db, assessment)
+    except Exception as exc:
+        fail_progress(assessment.id, "report", f"{exc.__class__.__name__}: {exc}")
+        raise
     path = Path(report.pdf_path)
     if path.exists():
         return FileResponse(path, media_type="application/pdf", filename=path.name)
@@ -801,7 +982,11 @@ def wizard_step3(
     if not assessment:
         return RedirectResponse(url="/assessments/new", status_code=302)
 
-    run_collection(db, assessment)
+    try:
+        run_collection(db, assessment)
+    except Exception as exc:
+        fail_progress(assessment.id, "collect", f"{exc.__class__.__name__}: {exc}")
+        raise
     return RedirectResponse(url=f"/assessments/new?assessment_id={assessment.id}", status_code=302)
 
 
@@ -815,7 +1000,11 @@ def wizard_step4(
     if not assessment:
         return RedirectResponse(url="/assessments/new", status_code=302)
 
-    build_model(db, assessment)
+    try:
+        build_model(db, assessment)
+    except Exception as exc:
+        fail_progress(assessment.id, "model", f"{exc.__class__.__name__}: {exc}")
+        raise
     return RedirectResponse(url=f"/assessments/new?assessment_id={assessment.id}", status_code=302)
 
 
@@ -829,30 +1018,41 @@ def wizard_step5(
     if not assessment:
         return RedirectResponse(url="/assessments/new", status_code=302)
 
-    # Risk scenarios: rebuild local index, run fixed query plan (K=4, relative threshold),
-    # then generate evidence-first scenarios (defensive-only) and refresh mitigation backlog.
-    build_rag_index(assessment.id)
-    rag_cfg = get_rag_advanced_state(db)
-    plan = run_rag_query_plan(
-        assessment.id, top_k=int(rag_cfg.get("top_k", 4)), min_ratio=float(rag_cfg.get("min_ratio", 0.70))
-    )
-    generate_hypotheses(assessment.id, plan, allow_local_fallback=True)
-    # Process-based trust workflow map (phase 1): derives workflow nodes and trust friction scoring.
+    start_progress(assessment.id, "assess", "Preparing risk assessment pipeline...")
     try:
-        from app.services.trust_workflows import generate_trust_workflow_map
-
-        generate_trust_workflow_map(
-            db,
-            assessment.id,
-            top_k=int(rag_cfg.get("top_k", 4)),
-            min_ratio=float(rag_cfg.get("min_ratio", 0.70)),
+        # Risk scenarios: rebuild local index, run fixed query plan (K=4, relative threshold),
+        # then generate evidence-first scenarios (defensive-only) and refresh mitigation backlog.
+        update_progress(assessment.id, "assess", "Refreshing retrieval index...")
+        build_rag_index(assessment.id)
+        rag_cfg = get_rag_advanced_state(db)
+        update_progress(assessment.id, "assess", "Selecting top evidence passages...")
+        plan = run_rag_query_plan(
+            assessment.id, top_k=int(rag_cfg.get("top_k", 4)), min_ratio=float(rag_cfg.get("min_ratio", 0.70))
         )
-    except Exception:
-        # Never break the wizard due to workflow mapping; log in server logs.
-        import logging
+        update_progress(assessment.id, "assess", "Generating evidence-first risk scenarios...")
+        generate_hypotheses(assessment.id, plan, allow_local_fallback=True)
+        # Process-based trust workflow map (phase 1): derives workflow nodes and trust friction scoring.
+        try:
+            from app.services.trust_workflows import generate_trust_workflow_map
 
-        logging.getLogger(__name__).exception("Trust workflow map generation failed for assessment %s", assessment.id)
-    build_mitigations(db, assessment)
+            update_progress(assessment.id, "assess", "Building workflow trust map...")
+            generate_trust_workflow_map(
+                db,
+                assessment.id,
+                top_k=int(rag_cfg.get("top_k", 4)),
+                min_ratio=float(rag_cfg.get("min_ratio", 0.70)),
+            )
+        except Exception:
+            # Never break the wizard due to workflow mapping; log in server logs.
+            import logging
+
+            logging.getLogger(__name__).exception("Trust workflow map generation failed for assessment %s", assessment.id)
+        update_progress(assessment.id, "assess", "Generating mitigations...")
+        build_mitigations(db, assessment)
+        finish_progress(assessment.id, "assess", "Risk assessment complete.")
+    except Exception as exc:
+        fail_progress(assessment.id, "assess", f"{exc.__class__.__name__}: {exc}")
+        raise
     return RedirectResponse(url=f"/assessments/new?assessment_id={assessment.id}", status_code=302)
 
 
@@ -866,7 +1066,11 @@ def wizard_step6(
     if not assessment:
         return RedirectResponse(url="/assessments/new", status_code=302)
 
-    export_report(db, assessment)
+    try:
+        export_report(db, assessment)
+    except Exception as exc:
+        fail_progress(assessment.id, "report", f"{exc.__class__.__name__}: {exc}")
+        raise
     return RedirectResponse(url=f"/assessments/new?assessment_id={assessment.id}", status_code=302)
 
 
