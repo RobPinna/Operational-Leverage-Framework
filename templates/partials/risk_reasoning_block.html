@@ -1,0 +1,21 @@
+{% if reasoning %}
+{% set _compact = reasoning_compact if reasoning_compact is defined else false %}
+<div class="mt-3 grid grid-cols-1 {% if not _compact %}sm:grid-cols-2{% endif %} gap-2">
+  <article class="info-card compact">
+    <p class="kpi-label">What we saw</p>
+    <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words">{{ reasoning.what_we_saw }}</p>
+  </article>
+  <article class="info-card compact">
+    <p class="kpi-label">Why it matters</p>
+    <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words">{{ reasoning.why_it_matters }}</p>
+  </article>
+  <article class="info-card compact">
+    <p class="kpi-label">Why Sx</p>
+    <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words">{{ reasoning.why_severity }}</p>
+  </article>
+  <article class="info-card compact">
+    <p class="kpi-label">Scope</p>
+    <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words">{{ reasoning.scope_boundary }}</p>
+  </article>
+</div>
+{% endif %}

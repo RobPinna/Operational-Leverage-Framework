@@ -65,6 +65,105 @@ RAG_MIN_RATIO_SETTING_NAME = "__rag_min_ratio__"
 logger = logging.getLogger(__name__)
 
 
+def _finding_chain_template(finding_type: str) -> dict[str, str]:
+    key = (finding_type or "").strip().lower()
+    if key == "exposure":
+        return {
+            "what": "Public pages expose reusable organizational details, contacts, and role cues",
+            "inference": "Attackers can assemble realistic reconnaissance packages with low effort",
+            "why": "Recon material improves pretext quality and lowers social-engineering friction",
+            "boundary": "This indicates exposure conditions, not confirmed active exploitation",
+        }
+    if key == "mention":
+        return {
+            "what": "External narratives and mentions mirror internal processes or trust language",
+            "inference": "Fraud pretexts can borrow familiar wording and timing",
+            "why": "Narrative alignment increases plausibility of malicious outreach",
+            "boundary": "No coordinated disinformation campaign was confirmed in this run",
+        }
+    if key == "touchpoint":
+        return {
+            "what": "Public support, billing, and contact channels are discoverable across sources",
+            "inference": "Official-channel ambiguity can enable conversation insertion",
+            "why": "Channel ambiguity increases risk of unauthorized process requests",
+            "boundary": "This reflects channel friction and trust weakness, not proven compromise",
+        }
+    if key == "pivot":
+        return {
+            "what": "Signals suggest brand trust could be leveraged against clients or partners",
+            "inference": "Impersonation attempts can pivot from public channels to downstream workflows",
+            "why": "Abuse of trusted identity can expand impact beyond internal perimeter",
+            "boundary": "No direct victim telemetry was observed above threshold",
+        }
+    return {
+        "what": "Multiple public indicators align around a potential trust-abuse condition",
+        "inference": "Evidence supports a plausible attack path hypothesis",
+        "why": "Without controls, trust-heavy workflows remain exposed to misuse",
+        "boundary": "Assessment captures externally visible signals only",
+    }
+
+
+def _severity_why_line(severity: int, confidence: int, evidence_count: int) -> str:
+    sev = max(1, min(5, int(severity or 3)))
+    conf = max(1, min(100, int(confidence or 0)))
+    count = max(1, int(evidence_count or 1))
+    if sev >= 4:
+        impact = "material operational/trust disruption if abused"
+    elif sev == 3:
+        impact = "meaningful disruption requiring defensive prioritization"
+    else:
+        impact = "contained impact unless combined with additional signals"
+    if conf >= 75:
+        likelihood = "high"
+    elif conf >= 50:
+        likelihood = "medium"
+    else:
+        likelihood = "low-to-medium"
+    return f"Likelihood {likelihood} from {count} corroborating signals (confidence {conf}%) with {impact}."
+
+
+def _mitigation_playbook(finding_type: str) -> str:
+    key = (finding_type or "").strip().lower()
+    if key == "touchpoint":
+        return (
+            "Consolidate one public channel registry, enforce callback verification for support/billing changes, "
+            "and require secondary approval for high-impact requests."
+        )
+    if key == "pivot":
+        return (
+            "Publish anti-impersonation guidance for customers/partners, deploy signed outbound communication patterns, "
+            "and activate rapid abuse-report triage."
+        )
+    if key == "mention":
+        return (
+            "Monitor recurring external narratives, standardize trusted wording for sensitive workflows, "
+            "and route suspicious references to joint Comms/Security review."
+        )
+    return (
+        "Reduce unnecessary public operational detail, harden identity checks in trust-heavy workflows, "
+        "and document escalation criteria for suspicious requests."
+    )
+
+
+def _normalize_finding_refs(raw_json: str) -> list[int]:
+    refs: list[int] = []
+    for item in from_json(raw_json, []):
+        if str(item).isdigit():
+            refs.append(int(item))
+            continue
+        if isinstance(item, dict):
+            cand = item.get("evidence_id") or item.get("id")
+            if str(cand).isdigit():
+                refs.append(int(cand))
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for value in refs:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
 def infer_source_type(url: str, connector_name: str = "") -> str:
     value = (url or "").lower()
     if value.startswith("dns://"):
@@ -263,11 +362,15 @@ def get_llm_runtime_config(db: Session) -> dict:
     if not model_row:
         return {
             "model": env_model or "gpt-4.1",
-            "api_key": deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else env_api_key,
+            "api_key": deobfuscate_secret(api_row.api_key_obfuscated)
+            if (api_row and api_row.api_key_obfuscated)
+            else env_api_key,
         }
     decoded_model = deobfuscate_secret(model_row.api_key_obfuscated) if model_row.api_key_obfuscated else None
     model = decoded_model if decoded_model in LLM_MODEL_OPTIONS else (env_model or "gpt-4.1")
-    api_key = deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else env_api_key
+    api_key = (
+        deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else env_api_key
+    )
     return {
         "model": model,
         "api_key": api_key,
@@ -580,9 +683,12 @@ def _build_findings_from_evidence(assessment: Assessment, evidences: list[Eviden
             "pivot": "risk to clients via impersonation",
         }
 
+        chain = _finding_chain_template(ftype)
         desc = (
-            f"{evidence_count} evidence items indicate {type_label_map.get(ftype, ftype)} risk patterns. "
-            "Assessment uses probabilistic confidence and may under-represent closed channels."
+            f"What we saw: {chain['what']} ({evidence_count} corroborating signals for {type_label_map.get(ftype, ftype)}). "
+            f"Why it matters: {chain['why']}. "
+            f"Why S{sev}: {_severity_why_line(sev, conf, evidence_count)} "
+            f"Scope boundary: {chain['boundary']}."
         )
 
         refs = [e.id for e in sorted(items, key=lambda x: x.confidence, reverse=True)[:8]]
@@ -612,8 +718,10 @@ def _build_findings_from_evidence(assessment: Assessment, evidences: list[Eviden
                 severity=4,
                 title="Client/Partner Safety Risk Requires Control Layer",
                 description=(
-                    "Observed external contact channel and narrative signals suggest potential misuse of brand trust "
-                    "to target customers/partners."
+                    "What we saw: Observed external contact and narrative signals indicate downstream trust exposure. "
+                    "Why it matters: conversation insertion in onboarding/invoice/donation workflows can trigger partner/client harm. "
+                    f"Why S4: {_severity_why_line(4, 72, len(downstream_refs))} "
+                    "Scope boundary: This captures abuse preconditions, not confirmed incidents."
                 ),
                 confidence=72,
                 evidence_refs_json=to_json(downstream_refs),
@@ -700,9 +808,7 @@ def build_mitigations(db: Session, assessment: Assessment) -> int:
                 priority=max(1, min(5, 6 - finding.severity)),
                 effort=effort,
                 owner=owner,
-                description=(
-                    f"Address '{finding.title}' with control updates, process hardening, and operator guidance."
-                ),
+                description=f"{finding.title}: {_mitigation_playbook(finding.type)}",
                 linked_findings_json=to_json([finding.id]),
             )
         )
@@ -764,6 +870,35 @@ def export_report(db: Session, assessment: Assessment) -> Report:
     export_dir = get_settings().runtime_dir / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     json_path = export_dir / f"assessment_{assessment.id}_{stamp}.json"
+    evidence_map = {e.id: e for e in evidences}
+    finding_payload: list[dict] = []
+    for f in findings:
+        refs = _normalize_finding_refs(f.evidence_refs_json)
+        linked = [evidence_map[ref] for ref in refs if ref in evidence_map]
+        chain = _finding_chain_template(f.type)
+        samples = [" ".join((e.snippet or e.title).strip().split())[:160] for e in linked[:2] if (e.snippet or e.title)]
+        finding_payload.append(
+            {
+                "id": f.id,
+                "type": f.type,
+                "severity": f.severity,
+                "title": f.title,
+                "description": f.description,
+                "confidence": f.confidence,
+                "evidence_refs": refs,
+                "analysis": {
+                    "what_we_saw": (
+                        f"{len(refs)} corroborating references"
+                        + (f"; signal samples: {' | '.join(samples)}" if samples else "")
+                    ),
+                    "inference": chain["inference"],
+                    "why_it_matters": chain["why"],
+                    "why_severity": _severity_why_line(f.severity, f.confidence, len(refs)),
+                    "scope_boundary": chain["boundary"],
+                },
+            }
+        )
+
     export_json = {
         "assessment": {
             "id": assessment.id,
@@ -774,18 +909,7 @@ def export_report(db: Session, assessment: Assessment) -> Report:
             "status": assessment.status,
             "assumptions": from_json(assessment.assumptions_json, []),
         },
-        "findings": [
-            {
-                "id": f.id,
-                "type": f.type,
-                "severity": f.severity,
-                "title": f.title,
-                "description": f.description,
-                "confidence": f.confidence,
-                "evidence_refs": from_json(f.evidence_refs_json, []),
-            }
-            for f in findings
-        ],
+        "findings": finding_payload,
         "mitigations": [
             {
                 "id": m.id,

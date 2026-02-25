@@ -1,4 +1,5 @@
 from urllib.parse import urlparse
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -113,6 +114,56 @@ def _defensive_actions_for_type(finding_type: str) -> list[str]:
     ]
 
 
+def _extract_reasoning_block(
+    *,
+    description: str,
+    severity: int,
+    confidence: int,
+    evidence_count: int,
+    bullets: dict[str, str],
+) -> dict[str, str]:
+    text = " ".join(str(description or "").split()).strip()
+    lowered = text.lower()
+
+    def _segment(start_label: str, end_label: str = "") -> str:
+        start = lowered.find(start_label.lower())
+        if start < 0:
+            return ""
+        start += len(start_label)
+        if end_label:
+            end = lowered.find(end_label.lower(), start)
+            if end > start:
+                return text[start:end].strip(" .")
+        return text[start:].strip(" .")
+
+    what_we_saw = _segment("What we saw:", "Why it matters:")
+    why_it_matters = _segment("Why it matters:", "Why S")
+    why_severity = ""
+    m = re.search(r"(?i)(Why S\d:\s*)(.*?)(Scope boundary:|$)", text)
+    if m:
+        why_severity = str(m.group(2) or "").strip(" .")
+    scope_boundary = _segment("Scope boundary:")
+
+    if not what_we_saw:
+        what_we_saw = f"{max(0, int(evidence_count or 0))} linked evidence items support this finding."
+    if not why_it_matters:
+        why_it_matters = bullets.get("matters", "")
+    if not why_severity:
+        why_severity = (
+            f"S{int(severity or 3)} derived from evidence strength and impact estimate "
+            f"(confidence {int(confidence or 0)}%)."
+        )
+    if not scope_boundary:
+        scope_boundary = "This finding reflects exposure conditions from public evidence, not confirmed compromise."
+
+    return {
+        "what_we_saw": what_we_saw,
+        "why_it_matters": why_it_matters,
+        "why_severity": why_severity,
+        "scope_boundary": scope_boundary,
+    }
+
+
 def _normalize_refs(raw_json: str) -> list[int]:
     refs: list[int] = []
     for item in from_json(raw_json, []):
@@ -224,6 +275,13 @@ def findings_page(
             gaps.append("No critical evidence gaps detected for this finding.")
 
         bullets = _finding_bullets(row)
+        reasoning = _extract_reasoning_block(
+            description=(row.description or "").strip(),
+            severity=row.severity,
+            confidence=row.confidence,
+            evidence_count=len(evidence_items),
+            bullets=bullets,
+        )
         cards.append(
             {
                 "id": row.id,
@@ -235,6 +293,7 @@ def findings_page(
                 "confidence": row.confidence,
                 "confidence_label": _confidence_label(row.confidence),
                 "bullets": bullets,
+                "reasoning": reasoning,
                 "evidence": evidence_items,
                 "assumptions": assumptions,
                 "gaps": gaps,

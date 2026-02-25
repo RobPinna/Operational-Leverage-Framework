@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Assessment, Document, Hypothesis, WorkflowNode
+from app.models import Assessment, Document, Evidence, Hypothesis, WorkflowNode
 from app.services.risk_brief_service import BriefInput, get_or_generate_brief
 from app.services.evidence_quality_classifier import classify_evidence
 from app.services.signal_model import (
@@ -37,6 +37,66 @@ RISK_STATUS_VALUES = ("ELEVATED", "WATCHLIST", "BASELINE")
 MIN_SIGNAL_COVERAGE_ELEVATED = 2
 MIN_EVIDENCE_REFS_ELEVATED = 2
 MIN_EVIDENCE_STRENGTH_ELEVATED = 60
+
+CONNECTOR_HUMAN_LABELS = {
+    "website_analyzer": "Public website content",
+    "official_channel_enumerator": "Official contact channels on website",
+    "public_role_extractor": "Public roles found in website",
+    "email_posture_analyzer": "Email security posture signals",
+    "dns_footprint": "DNS records and domain footprint",
+    "subdomain_discovery": "Public subdomain exposure",
+    "gdelt_news": "News and media mentions",
+    "media_trend": "External narrative trend signals",
+    "social_mock": "Public social channel signals",
+    "job_postings_live": "Public job posting signals",
+    "vendor_js_detection": "Third-party vendor technologies on web pages",
+    "procurement_documents": "Public procurement/workflow documents",
+    "public_docs_pdf": "Public PDF documents",
+}
+CONNECTOR_PRIORITY = {
+    "website_analyzer": 0,
+    "official_channel_enumerator": 1,
+    "public_role_extractor": 2,
+    "dns_footprint": 3,
+    "subdomain_discovery": 4,
+    "public_docs_pdf": 5,
+    "procurement_documents": 6,
+    "job_postings_live": 7,
+    "vendor_js_detection": 8,
+    "social_mock": 9,
+    "gdelt_news": 10,
+    "media_trend": 11,
+}
+EMAIL_PATTERN = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
+PHONE_PATTERN = re.compile(r"\+?\d[\d\s().\-]{7,}\d")
+ROLE_HINTS = (
+    "finance",
+    "billing",
+    "procurement",
+    "support",
+    "customer care",
+    "helpdesk",
+    "privacy",
+    "dpo",
+    "security",
+    "it",
+    "hr",
+    "executive",
+    "director",
+    "manager",
+)
+
+
+def _connector_human_label(connector_name: str) -> str:
+    key = str(connector_name or "").strip().lower()
+    if not key:
+        return ""
+    return CONNECTOR_HUMAN_LABELS.get(key, key.replace("_", " ").strip())
+
+
+def _connector_sort_key(connector_name: str) -> tuple[int, str]:
+    key = str(connector_name or "").strip().lower()
+    return (int(CONNECTOR_PRIORITY.get(key, 99)), key)
 
 
 def _vendor_cues_from_evidence(evidence: list[dict[str, Any]]) -> list[str]:
@@ -167,6 +227,432 @@ def _first_sentence(value: str, max_chars: int = 180) -> str:
     parts = re.split(r"(?<=[.!?])\s+", text)
     out = (parts[0] if parts else text).strip()
     return out[:max_chars]
+
+
+def _truncate_words(value: str, max_chars: int = 140) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    chunk = text[: max_chars + 1]
+    if " " in chunk:
+        chunk = chunk.rsplit(" ", 1)[0]
+    chunk = chunk.rstrip(" ,;:-")
+    return f"{chunk}..."
+
+
+def _signal_excerpt(ev: dict[str, Any]) -> str:
+    title = _truncate_words(str(ev.get("title", "")), max_chars=120)
+    snippet = _truncate_words(_first_sentence(str(ev.get("snippet", "")), max_chars=220), max_chars=140)
+    low_title = title.lower()
+    if title and low_title not in {"limited evidence", "no excerpt captured."} and len(title) >= 10:
+        return title
+    if snippet and snippet.lower() != "no excerpt captured.":
+        return snippet
+    return ""
+
+
+def _extract_indicator_candidates(title: str, snippet: str) -> list[str]:
+    blob = " ".join(f"{title} {snippet}".split()).strip()
+    if not blob:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    for em in EMAIL_PATTERN.findall(blob):
+        key = f"email:{em.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f"Found public email: {em}")
+        if len(out) >= 6:
+            return out
+
+    for ph in PHONE_PATTERN.findall(blob):
+        normalized = " ".join(str(ph).split())
+        key = f"phone:{normalized}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f"Found public phone/contact number: {normalized}")
+        if len(out) >= 6:
+            return out
+
+    low_blob = blob.lower()
+    for role in ROLE_HINTS:
+        if role in low_blob:
+            key = f"role:{role}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(f"Found publicly targetable role cue: {role}")
+            if len(out) >= 6:
+                return out
+    return out
+
+
+def _is_generic_why_text(value: str) -> bool:
+    low = " ".join(str(value or "").split()).strip().lower()
+    if not low:
+        return True
+    generic_markers = (
+        "potential effects include",
+        "open for evidence and defensive controls",
+        "this condition can increase",
+        "risk patterns",
+        "assessment uses probabilistic",
+    )
+    return any(marker in low for marker in generic_markers)
+
+
+def _why_it_matters_cti(
+    *,
+    risk: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    fallback_context: str = "",
+) -> str:
+    signal_types = {str(ev.get("signal_type", "")).strip().upper() for ev in (evidence or []) if ev}
+    risk_type = str(risk.get("risk_type", "")).strip().lower()
+    impact_band = str(risk.get("impact_band", "MED") or "MED").strip().upper()
+
+    has_contact = "CONTACT_CHANNEL" in signal_types
+    has_org = "ORG_CUE" in signal_types
+    has_process = "PROCESS_CUE" in signal_types
+    has_vendor = "VENDOR_CUE" in signal_types
+    has_social = "SOCIAL_TRUST_NODE" in signal_types
+
+    if risk_type in {"downstream_pivot", "impersonation", "brand_abuse", "social_trust_surface_exposure"}:
+        actor_line = "A malicious actor could impersonate official channels and insert pretexts into client/partner interactions."
+    elif risk_type in {"fraud_process"} or has_process:
+        actor_line = (
+            "A malicious actor could time fraudulent requests against visible workflow steps to bypass routine checks."
+        )
+    elif risk_type in {"credential_theft_risk"}:
+        actor_line = "A malicious actor could exploit publicly visible account-handling cues to increase account takeover attempts."
+    elif has_contact and has_org:
+        actor_line = "A malicious actor could combine public contact paths with staff-role cues to craft believable social-engineering pretexts."
+    elif has_contact:
+        actor_line = "A malicious actor could abuse public contact entrypoints to route deceptive requests through trusted channels."
+    elif has_social:
+        actor_line = "A malicious actor could exploit social trust surfaces to make malicious outreach appear operationally legitimate."
+    else:
+        actor_line = "A malicious actor could combine public signals to build convincing pretexts for targeted social engineering."
+
+    if impact_band == "HIGH":
+        impact_line = (
+            "This raises the success probability of social-engineering pretexts and can cause material trust, operational, "
+            "or financial disruption before escalation."
+        )
+    elif impact_band == "MED":
+        impact_line = "This increases the success probability of social-engineering pretexts and can drive avoidable operational friction and trust erosion."
+    else:
+        impact_line = "This can still improve pretext credibility and should be controlled before it compounds with additional signals."
+
+    if has_vendor:
+        impact_line += " Third-party workflow cues can further strengthen attacker plausibility."
+
+    fallback = _first_sentence(fallback_context, max_chars=190)
+    if fallback and not _is_generic_why_text(fallback):
+        return f"{actor_line} {impact_line} Context: {fallback}"
+    return f"{actor_line} {impact_line}"
+
+
+def _sample_signal_lines(evidence: list[dict[str, Any]], *, max_items: int = 3) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for ev in evidence or []:
+        if len(out) >= max_items:
+            break
+        hints = ev.get("indicator_hints")
+        if isinstance(hints, list):
+            for hint in hints:
+                line = " ".join(str(hint or "").split()).strip()
+                if not line:
+                    continue
+                key = f"hint:{re.sub(r'[^a-z0-9]+', ' ', line.lower()).strip()[:120]}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(line)
+                if len(out) >= max_items:
+                    break
+        if len(out) >= max_items:
+            break
+
+        title = " ".join(str(ev.get("title", "")).split()).strip()
+        snippet = " ".join(str(ev.get("snippet", "")).split()).strip()
+        blob = f"{title} {snippet}".strip()
+
+        # 1) Prefer concrete indicators (emails/phones/roles/contact channels).
+        emails = EMAIL_PATTERN.findall(blob)
+        for em in emails:
+            key = f"email:{em.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(f"Found public email: {em}")
+            if len(out) >= max_items:
+                break
+        if len(out) >= max_items:
+            break
+
+        phones = PHONE_PATTERN.findall(blob)
+        for ph in phones:
+            normalized = " ".join(str(ph).split())
+            key = f"phone:{normalized}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(f"Found public phone/contact number: {normalized}")
+            if len(out) >= max_items:
+                break
+        if len(out) >= max_items:
+            break
+
+        low_blob = blob.lower()
+        role_match = next((role for role in ROLE_HINTS if role in low_blob), "")
+        if role_match:
+            key = f"role:{role_match}"
+            if key not in seen:
+                seen.add(key)
+                out.append(f"Found publicly targetable role cue: {role_match}")
+                if len(out) >= max_items:
+                    break
+
+        url = str(ev.get("url", "")).strip()
+        if url:
+            try:
+                parsed = urlparse(url)
+                host = (parsed.netloc or "").lower().split(":")[0]
+                path = parsed.path or "/"
+                if host:
+                    key = f"url:{host}{path[:40]}"
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(f"Found public contact/workflow page: {host}{path[:40]}")
+                        if len(out) >= max_items:
+                            break
+            except Exception:
+                pass
+
+        # 2) Fallback to concise excerpt.
+        txt = _signal_excerpt(ev)
+        if txt:
+            key = f"txt:{re.sub(r'[^a-z0-9]+', ' ', txt.lower()).strip()[:100]}"
+            if key not in seen:
+                seen.add(key)
+                out.append(txt)
+    return out[:max_items]
+
+
+def _hint_priority(value: str) -> int:
+    low = " ".join(str(value or "").split()).strip().lower()
+    if not low:
+        return 99
+    if low.startswith("found public email:"):
+        return 0
+    if low.startswith("found public phone/contact number:"):
+        return 1
+    if "contact/workflow page" in low:
+        return 2
+    if low.startswith("found publicly targetable role cue:"):
+        return 3
+    return 4
+
+
+def _signal_type_from_evidence_row(*, url: str, title: str, snippet: str, evidence_kind: str, category: str) -> str:
+    kind = str(evidence_kind or "").strip().upper()
+    cat = str(category or "").strip().lower()
+    if kind == "WORKFLOW_VENDOR":
+        return "VENDOR_CUE"
+    if kind == "CONTACT_CHANNEL" or cat == "touchpoint":
+        return "CONTACT_CHANNEL"
+    if kind == "NEWS_MENTION" or cat == "mention":
+        return "EXTERNAL_ATTENTION"
+    if kind == "ORG_ROLE":
+        return "ORG_CUE"
+    if kind == "PROCUREMENT":
+        return "PROCESS_CUE"
+    if cat == "pivot":
+        return "PROCESS_CUE"
+    return infer_signal_type(url, snippet, query_id="EV")
+
+
+def _evidence_context_maps_for_assessment(
+    db: Session, assessment_id: int
+) -> tuple[dict[str, set[str]], dict[str, list[str]], dict[str, list[str]], dict[str, set[str]]]:
+    """
+    Build canonical_url -> connector names + indicator hints from normalized evidence rows.
+    This lets stakeholder views show concrete data lineage and concrete indicators next to risk evidence.
+    """
+    connectors_by_url: dict[str, set[str]] = {}
+    indicator_hints_by_url: dict[str, list[str]] = {}
+    signal_hints_by_type: dict[str, list[str]] = {}
+    signal_connectors_by_type: dict[str, set[str]] = {}
+    rows = db.execute(
+        select(
+            Evidence.source_url,
+            Evidence.connector,
+            Evidence.title,
+            Evidence.snippet,
+            Evidence.evidence_kind,
+            Evidence.category,
+        ).where(Evidence.assessment_id == int(assessment_id))
+    ).all()
+    for raw_url, raw_connector, raw_title, raw_snippet, raw_kind, raw_category in rows:
+        url = str(raw_url or "").strip()
+        connector = str(raw_connector or "").strip()
+        if not url or not connector:
+            continue
+        key = _canonical_url(url)
+        if not key:
+            continue
+        bucket = connectors_by_url.setdefault(key, set())
+        bucket.add(connector)
+
+        hints = _extract_indicator_candidates(str(raw_title or ""), str(raw_snippet or ""))
+        if hints:
+            dst = indicator_hints_by_url.setdefault(key, [])
+            for hint in hints:
+                line = " ".join(str(hint or "").split()).strip()
+                if not line or line in dst:
+                    continue
+                dst.append(line)
+                if len(dst) >= 8:
+                    break
+        st = _signal_type_from_evidence_row(
+            url=url,
+            title=str(raw_title or ""),
+            snippet=str(raw_snippet or ""),
+            evidence_kind=str(raw_kind or ""),
+            category=str(raw_category or ""),
+        )
+        if st:
+            sc = signal_connectors_by_type.setdefault(st, set())
+            sc.add(connector)
+            sh = signal_hints_by_type.setdefault(st, [])
+            for hint in hints:
+                line = " ".join(str(hint or "").split()).strip()
+                if not line or line in sh:
+                    continue
+                sh.append(line)
+                if len(sh) >= 16:
+                    break
+    return connectors_by_url, indicator_hints_by_url, signal_hints_by_type, signal_connectors_by_type
+
+
+def _severity_from_likelihood_impact(likelihood: str, impact_band: str) -> int:
+    lik = (likelihood or "med").strip().lower()
+    imp = (impact_band or "MED").strip().upper()
+    matrix = {
+        "LOW": {"low": 1, "med": 2, "high": 3},
+        "MED": {"low": 2, "med": 3, "high": 4},
+        "HIGH": {"low": 3, "med": 4, "high": 5},
+    }
+    return int(matrix.get(imp, matrix["MED"]).get(lik, 3))
+
+
+def _reasoning_block_for_risk(
+    *,
+    risk: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    recipe_bundles: list[dict[str, Any]] | None = None,
+    risk_vector_summary: str = "",
+    supplemental_hints: list[str] | None = None,
+    supplemental_connectors: list[str] | None = None,
+) -> dict[str, str]:
+    signal_types = int(risk.get("signal_diversity_count", 0) or 0)
+    refs = int(risk.get("evidence_refs_count", 0) or len(evidence or []))
+
+    bundle_names = [
+        str(b.get("title", "")).strip()
+        for b in (recipe_bundles or [])
+        if isinstance(b, dict) and str(b.get("title", "")).strip()
+    ]
+    if not bundle_names:
+        bundle_names = [
+            str(b.get("title", "")).strip()
+            for b in (risk.get("recipe_bundles") or [])
+            if isinstance(b, dict) and str(b.get("title", "")).strip()
+        ]
+    bundle_phrase = ", ".join(bundle_names[:2])
+
+    connector_set: set[str] = set()
+    for ev in evidence or []:
+        raw = ev.get("connectors")
+        if isinstance(raw, list):
+            for item in raw:
+                c = str(item or "").strip()
+                if c:
+                    connector_set.add(c)
+    for conn in supplemental_connectors or []:
+        c = str(conn or "").strip()
+        if c:
+            connector_set.add(c)
+    ordered_connector_names = sorted(connector_set, key=_connector_sort_key)
+    connector_labels = [
+        _connector_human_label(name) for name in ordered_connector_names if _connector_human_label(name)
+    ]
+    source_label = ", ".join(connector_labels[:3]) if connector_labels else "risk evidence sources"
+
+    merged_candidates: list[str] = []
+    merged_candidates.extend(_sample_signal_lines(evidence, max_items=8))
+    for hint in supplemental_hints or []:
+        line = " ".join(str(hint or "").split()).strip()
+        if line:
+            merged_candidates.append(line)
+
+    deduped: list[str] = []
+    seen_keys: set[str] = set()
+    for line in merged_candidates:
+        key = re.sub(r"[^a-z0-9]+", " ", line.lower()).strip()[:140]
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(line)
+    deduped.sort(key=lambda x: (_hint_priority(x), len(x)))
+    sample_signals = deduped[:3]
+
+    supplemental_indicator_count = min(max(0, len(supplemental_hints or [])), 4)
+    display_refs = int(refs) + int(supplemental_indicator_count) if supplemental_indicator_count > 0 else int(refs)
+    what_we_saw = f"{display_refs} linked evidence items"
+    if supplemental_indicator_count > 0:
+        what_we_saw += f" ({int(refs)} risk-linked + {supplemental_indicator_count} correlated indicators)"
+    if signal_types > 0:
+        what_we_saw += f" across {signal_types} signal types"
+    what_we_saw += f" from {source_label}."
+    if bundle_phrase:
+        what_we_saw += f" Key conditions: {bundle_phrase}."
+    if sample_signals:
+        what_we_saw += " Sample signals: " + "; ".join([f"{idx + 1}) {s}" for idx, s in enumerate(sample_signals)])
+
+    why_context = str(risk.get("why_matters", "") or risk_vector_summary or "")
+    why_it_matters = _why_it_matters_cti(
+        risk=risk,
+        evidence=evidence,
+        fallback_context=why_context,
+    )
+
+    likelihood = str(risk.get("likelihood", "med") or "med").strip().lower()
+    impact_band = str(risk.get("impact_band", "MED") or "MED").strip().upper()
+    confidence = int(risk.get("confidence", 0) or 0)
+    evidence_strength = str(risk.get("evidence_strength", "WEAK") or "WEAK").strip().upper()
+    severity = _severity_from_likelihood_impact(likelihood, impact_band)
+    why_severity = (
+        f"S{severity} from likelihood {likelihood.upper()} + impact {impact_band}; "
+        f"evidence strength {evidence_strength} ({confidence}%)."
+    )
+
+    scope_boundary = (
+        "Defensive hypothesis based on public evidence. It reflects exposure/preconditions, not confirmed exploitation."
+    )
+    return {
+        "what_we_saw": what_we_saw,
+        "why_it_matters": why_it_matters,
+        "why_severity": why_severity,
+        "scope_boundary": scope_boundary,
+    }
 
 
 def _canonical_url(url: str) -> str:
@@ -394,6 +880,8 @@ def _normalize_evidence_refs(
     docs_by_id: dict[int, Document],
     docs_by_url: dict[str, Document],
     query_id: str,
+    connectors_by_url: dict[str, set[str]] | None = None,
+    indicator_hints_by_url: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for item in refs or []:
@@ -465,10 +953,18 @@ def _normalize_evidence_refs(
             doc_type = doc.doc_type or ""
             doc_id = int(doc.id)
 
+        canonical = _canonical_url(url)
+        connectors: list[str] = []
+        if connectors_by_url:
+            connectors = sorted(list(connectors_by_url.get(canonical, set())))
+        indicator_hints: list[str] = []
+        if indicator_hints_by_url:
+            indicator_hints = list(indicator_hints_by_url.get(canonical, []))
+
         out.append(
             {
                 "url": url,
-                "canonical_url": _canonical_url(url),
+                "canonical_url": canonical,
                 "domain": _domain_for_url(url),
                 "title": title,
                 "snippet": snippet or "No excerpt captured.",
@@ -485,6 +981,8 @@ def _normalize_evidence_refs(
                 "evidence_kind": evidence_kind,
                 "quality_tier": quality_tier,
                 "rationale": rationale,
+                "connectors": connectors,
+                "indicator_hints": indicator_hints,
             }
         )
     return out
@@ -979,6 +1477,12 @@ def get_ranked_risks(
 
     docs_by_id: dict[int, Document] = {}
     docs_by_url: dict[str, Document] = {}
+    (
+        connectors_by_url,
+        indicator_hints_by_url,
+        signal_hints_by_type,
+        signal_connectors_by_type,
+    ) = _evidence_context_maps_for_assessment(db, assessment_id)
     if doc_ids:
         for d in db.execute(select(Document).where(Document.id.in_(list(doc_ids)))).scalars().all():
             docs_by_id[int(d.id)] = d
@@ -1018,6 +1522,8 @@ def get_ranked_risks(
             docs_by_id=docs_by_id,
             docs_by_url=docs_by_url,
             query_id=str(h.query_id or "")[:16],
+            connectors_by_url=connectors_by_url,
+            indicator_hints_by_url=indicator_hints_by_url,
         )
 
         evidence_valid = [
@@ -1403,6 +1909,26 @@ def get_ranked_risks(
                 "evidence_quality": evidence_quality,
             },
         }
+        target_signals = [k for k, v in (counts or {}).items() if int(v or 0) > 0 and k in SIGNAL_TYPES]
+        if not target_signals:
+            target_signals = list(signal_types)
+        supplemental_hints: list[str] = []
+        supplemental_connectors_set: set[str] = set()
+        for st in target_signals:
+            for hint in signal_hints_by_type.get(st, []):
+                line = " ".join(str(hint or "").split()).strip()
+                if line and line not in supplemental_hints:
+                    supplemental_hints.append(line)
+            supplemental_connectors_set.update(signal_connectors_by_type.get(st, set()))
+        supplemental_hints.sort(key=lambda x: (_hint_priority(x), len(x)))
+        summary["reasoning"] = _reasoning_block_for_risk(
+            risk=summary,
+            evidence=risk_ev_dedup,
+            recipe_bundles=risk_bundles,
+            risk_vector_summary=str(summary.get("risk_vector_summary", "")),
+            supplemental_hints=supplemental_hints[:10],
+            supplemental_connectors=sorted(list(supplemental_connectors_set), key=_connector_sort_key)[:5],
+        )
         risk_summaries.append(summary)
 
     by_status: dict[str, list[dict[str, Any]]] = {"ELEVATED": [], "WATCHLIST": [], "BASELINE": []}
@@ -1474,6 +2000,10 @@ def get_ranked_risks(
         "docs_by_id": docs_by_id,
         "docs_by_url": docs_by_url,
         "workflow_nodes": workflow_nodes,
+        "connectors_by_url": connectors_by_url,
+        "indicator_hints_by_url": indicator_hints_by_url,
+        "signal_hints_by_type": signal_hints_by_type,
+        "signal_connectors_by_type": signal_connectors_by_type,
         "include_baseline": bool(include_baseline),
     }
 
@@ -1543,6 +2073,8 @@ def build_overview_viewmodel(
     docs_by_id = dict(ranked.get("docs_by_id") or {})
     docs_by_url = dict(ranked.get("docs_by_url") or {})
     workflow_nodes = list(ranked.get("workflow_nodes") or [])
+    connectors_by_url = dict(ranked.get("connectors_by_url") or {})
+    indicator_hints_by_url = dict(ranked.get("indicator_hints_by_url") or {})
     evidence_sets = dict(ranked.get("evidence_sets") or {})
     by_status = dict(ranked.get("ranked_by_status") or {})
     elevated = list(by_status.get("ELEVATED") or [])
@@ -1575,7 +2107,25 @@ def build_overview_viewmodel(
         limit=watchlist_preview_limit,
     )
     watchlist_total_count = int(len(list(watchlist_full.get("items") or [])))
-    watchlist_preview = list(watchlist_preview_data.get("items") or [])
+    watchlist_preview_raw = list(watchlist_preview_data.get("items") or [])
+    watchlist_preview: list[dict[str, Any]] = []
+    for row in watchlist_preview_raw:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        rid = int(item.get("id", 0) or 0)
+        ev = list(evidence_sets.get(f"risk:{rid}", []) or [])
+        item["reasoning"] = (
+            dict(item.get("reasoning") or {})
+            if isinstance(item.get("reasoning"), dict)
+            else _reasoning_block_for_risk(
+                risk=item,
+                evidence=ev,
+                recipe_bundles=list(item.get("recipe_bundles") or []),
+                risk_vector_summary=str(item.get("risk_vector_summary", "")),
+            )
+        )
+        watchlist_preview.append(item)
 
     if not risk_summaries:
         return {
@@ -1695,6 +2245,16 @@ def build_overview_viewmodel(
         "evidence_strength": str(top.get("evidence_strength", "WEAK")),
         "confidence": int(top.get("confidence", 0) or 0),
         "convergence_count": convergence_count,
+        "reasoning": (
+            dict(top.get("reasoning") or {})
+            if isinstance(top.get("reasoning"), dict)
+            else _reasoning_block_for_risk(
+                risk=top,
+                evidence=list(top_ev_valid or []),
+                recipe_bundles=recipe_bundles,
+                risk_vector_summary=str(getattr(top_row, "risk_vector_summary", "") or "").strip() if top_row else "",
+            )
+        ),
     }
 
     confirm_points: list[str] = []
@@ -1743,7 +2303,14 @@ def build_overview_viewmodel(
         evs = from_json(n.evidence_refs_json or "[]", [])
         if not isinstance(evs, list):
             evs = []
-        norm = _normalize_evidence_refs(evs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id="WF")
+        norm = _normalize_evidence_refs(
+            evs,
+            docs_by_id=docs_by_id,
+            docs_by_url=docs_by_url,
+            query_id="WF",
+            connectors_by_url=connectors_by_url,
+            indicator_hints_by_url=indicator_hints_by_url,
+        )
         norm_valid = [
             ev
             for ev in norm
@@ -1891,7 +2458,14 @@ def build_overview_viewmodel(
         evs = from_json(n.evidence_refs_json or "[]", [])
         if not isinstance(evs, list):
             evs = []
-        norm = _normalize_evidence_refs(evs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id="WF")
+        norm = _normalize_evidence_refs(
+            evs,
+            docs_by_id=docs_by_id,
+            docs_by_url=docs_by_url,
+            query_id="WF",
+            connectors_by_url=connectors_by_url,
+            indicator_hints_by_url=indicator_hints_by_url,
+        )
         norm_valid = [
             ev
             for ev in norm
@@ -1918,6 +2492,16 @@ def build_overview_viewmodel(
     for r in elevated_list[:6]:
         set_id = str(r.get("evidence_set_id", ""))
         evs = evidence_sets.get(set_id, [])
+        reasoning = (
+            dict(r.get("reasoning") or {})
+            if isinstance(r.get("reasoning"), dict)
+            else _reasoning_block_for_risk(
+                risk=r,
+                evidence=list(evs or []),
+                recipe_bundles=list(r.get("recipe_bundles") or []),
+                risk_vector_summary=str(r.get("risk_vector_summary", "")),
+            )
+        )
         all_scenarios.append(
             {
                 "id": f"sc:{int(r.get('id'))}",
@@ -1930,6 +2514,7 @@ def build_overview_viewmodel(
                 "impact_band": str(r.get("impact_band", "MED")),
                 "likelihood": str(r.get("likelihood", "med")),
                 "evidence_strength": str(r.get("evidence_strength", "WEAK")),
+                "reasoning": reasoning,
             }
         )
 
@@ -2029,7 +2614,14 @@ def build_overview_viewmodel(
         evs = from_json(n.evidence_refs_json or "[]", [])
         if not isinstance(evs, list):
             evs = []
-        norm = _normalize_evidence_refs(evs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id="WF")
+        norm = _normalize_evidence_refs(
+            evs,
+            docs_by_id=docs_by_id,
+            docs_by_url=docs_by_url,
+            query_id="WF",
+            connectors_by_url=connectors_by_url,
+            indicator_hints_by_url=indicator_hints_by_url,
+        )
         node_urls = {str(ev.get("canonical_url", "")) for ev in (norm or []) if str(ev.get("canonical_url", ""))}
 
         best_rid = top_id
@@ -2058,6 +2650,25 @@ def build_overview_viewmodel(
         if len(high_friction_nodes) >= 6:
             break
 
+    elevated_with_reasoning: list[dict[str, Any]] = []
+    for r in elevated_list[:10]:
+        if not isinstance(r, dict):
+            continue
+        row = dict(r)
+        rid = int(row.get("id", 0) or 0)
+        ev = list(evidence_sets.get(f"risk:{rid}", []) or [])
+        row["reasoning"] = (
+            dict(row.get("reasoning") or {})
+            if isinstance(row.get("reasoning"), dict)
+            else _reasoning_block_for_risk(
+                risk=row,
+                evidence=ev,
+                recipe_bundles=list(row.get("recipe_bundles") or []),
+                risk_vector_summary=str(row.get("risk_vector_summary", "")),
+            )
+        )
+        elevated_with_reasoning.append(row)
+
     return {
         "assessment_id": assessment_id,
         "generated_at": datetime.utcnow().isoformat() + "Z",
@@ -2071,7 +2682,7 @@ def build_overview_viewmodel(
         "storyMap": storyMap,
         "storyMapAll": storyMapAll,
         "controlPoints": control_points,
-        "elevatedRisks": elevated_list[:10],
+        "elevatedRisks": elevated_with_reasoning,
         "highTrustFrictionNodes": high_friction_nodes,
         "evidenceSets": evidence_sets,
         "details": details,
@@ -2105,6 +2716,8 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     ranked_snapshot = get_ranked_risks(db, assessment)
     ranked_all = list(ranked_snapshot.get("all_unfiltered") or [])
     ranked_row = next((item for item in ranked_all if int(item.get("id", 0) or 0) == rid), None)
+    connectors_by_url = dict(ranked_snapshot.get("connectors_by_url") or {})
+    indicator_hints_by_url = dict(ranked_snapshot.get("indicator_hints_by_url") or {})
 
     # Prefetch documents referenced by this risk and by workflow nodes.
     refs = from_json(row.evidence_refs_json or "[]", [])
@@ -2140,7 +2753,12 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     evidence_sets: dict[str, list[dict[str, Any]]] = {}
     parsed = _parse_signal_counts_blob(row.signal_counts_json or "{}")
     evidence_all = _normalize_evidence_refs(
-        refs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id=str(row.query_id or "")[:16]
+        refs,
+        docs_by_id=docs_by_id,
+        docs_by_url=docs_by_url,
+        query_id=str(row.query_id or "")[:16],
+        connectors_by_url=connectors_by_url,
+        indicator_hints_by_url=indicator_hints_by_url,
     )
     evidence_valid = [
         ev
@@ -2270,7 +2888,14 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         evs = from_json(n.evidence_refs_json or "[]", [])
         if not isinstance(evs, list):
             evs = []
-        norm = _normalize_evidence_refs(evs, docs_by_id=docs_by_id, docs_by_url=docs_by_url, query_id="WF")
+        norm = _normalize_evidence_refs(
+            evs,
+            docs_by_id=docs_by_id,
+            docs_by_url=docs_by_url,
+            query_id="WF",
+            connectors_by_url=connectors_by_url,
+            indicator_hints_by_url=indicator_hints_by_url,
+        )
         norm_valid = [
             ev
             for ev in norm
@@ -2339,6 +2964,15 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         "evidence_strength_score": int(conf),
         "timeline": timeline[:7] if isinstance(timeline, list) else [],
     }
+    if isinstance(ranked_row, dict) and isinstance(ranked_row.get("reasoning"), dict):
+        risk["reasoning"] = dict(ranked_row.get("reasoning") or {})
+    else:
+        risk["reasoning"] = _reasoning_block_for_risk(
+            risk=risk,
+            evidence=list(evidence_sets.get(f"risk:{rid}", []) or []),
+            recipe_bundles=recipe_bundles,
+            risk_vector_summary=risk_vector_summary,
+        )
 
     # Lightweight CTI tags (heuristic, defensive-only): chips for stakeholders.
     rt_low = str(row.risk_type or "").strip().lower()

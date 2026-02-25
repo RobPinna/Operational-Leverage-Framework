@@ -95,6 +95,7 @@ def list_risks(
                     if int(r.get("plausibility_score", 0) or 0) < 55
                     else "Needs validation"
                 ),
+                "reasoning": dict(r.get("reasoning") or {}),
                 "url": str(r.get("scenario_url", f"/assessments/{assessment_id}/risks/{int(r.get('id') or 0)}")),
             }
         )

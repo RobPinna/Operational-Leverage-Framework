@@ -83,6 +83,9 @@
                 {{ (c.risk_vector_summary or c.why) | replace('Top risk:', 'Risk:') }}
               </p>
               {% endif %}
+              {% set reasoning = c.reasoning %}
+              {% set reasoning_compact = true %}
+              {% include "partials/risk_reasoning_block.html" %}
             </div>
             <a class="btn-primary text-xs" href="{{ c.url }}">Open</a>
           </div>

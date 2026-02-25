@@ -35,9 +35,15 @@
       <p class="item-description clamp-6 mt-3">{{ item.description }}</p>
 
       <ul class="mt-3 space-y-1 text-sm text-slate-300">
+        <li><span class="text-slate-400">What we saw:</span> {{ item.reasoning.what_we_saw }}</li>
+        <li><span class="text-slate-400">Why it matters:</span> {{ item.reasoning.why_it_matters }}</li>
+        <li><span class="text-slate-400">Why S{{ item.severity }}:</span> {{ item.reasoning.why_severity }}</li>
+        <li><span class="text-slate-400">Scope boundary:</span> {{ item.reasoning.scope_boundary }}</li>
+      </ul>
+
+      <ul class="mt-3 space-y-1 text-sm text-slate-300">
         <li><span class="text-slate-400">What enables it:</span> {{ item.bullets.enables }}</li>
         <li><span class="text-slate-400">Who is impacted:</span> {{ item.bullets.impacted }}</li>
-        <li><span class="text-slate-400">Why it matters:</span> {{ item.bullets.matters }}</li>
       </ul>
 
       <div class="divider"></div>

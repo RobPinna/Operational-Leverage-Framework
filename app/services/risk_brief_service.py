@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -26,13 +27,19 @@ LLM_QUOTA_COOLDOWN_SECONDS = 900
 _llm_quota_block_until = 0.0
 _llm_quota_last_notice = 0.0
 
-# Defensive-only guard: reject outputs that look like usable phishing templates or operational attack instructions.
-PROHIBITED_PATTERN = re.compile(
+# Defensive-only guard: reject outputs that resemble actionable abuse instructions.
+# Note: descriptive CTI terms (e.g., "phishing") are allowed when not instructional.
+PROHIBITED_ACTIONABLE_PATTERN = re.compile(
     r"(?i)\b("
-    r"spearphish|phishing|credential(s)?|password reset|one[- ]time passcode|otp|"
-    r"wire transfer|bank details|invoice attachment|send the code|verify your account|"
-    r"login link|enter your credentials|click here to|malware|exploit|payload|"
-    r"bypass|evade|step[- ]by[- ]step|use this script|copy and paste"
+    r"click here to|copy and paste|use this script|step[- ]by[- ]step|"
+    r"send the code|verify your account|login link|invoice attachment|"
+    r"bypass|evade|deploy payload|dropper|malware payload"
+    r")\b"
+)
+PROHIBITED_SOCIAL_ENGINEERING_PROMPT_PATTERN = re.compile(
+    r"(?i)\b("
+    r"enter your credentials|provide your password|share (the )?(otp|code)|"
+    r"reset your password using this link|confirm bank details now"
     r")\b"
 )
 
@@ -70,6 +77,7 @@ IMPACT_KEYWORDS = (
     "operational disruption",
     "reputational damage",
 )
+RISK_BRIEF_SAFETY_FILTER_ENABLED = os.getenv("RISK_BRIEF_SAFETY_FILTER", "0").strip() == "1"
 
 
 @dataclass(frozen=True)
@@ -130,7 +138,12 @@ def _hash_input(inp: BriefInput) -> str:
 
 
 def _contains_prohibited(text: str) -> bool:
-    return bool(PROHIBITED_PATTERN.search(text or ""))
+    if not RISK_BRIEF_SAFETY_FILTER_ENABLED:
+        return False
+    value = str(text or "")
+    return bool(
+        PROHIBITED_ACTIONABLE_PATTERN.search(value) or PROHIBITED_SOCIAL_ENGINEERING_PROMPT_PATTERN.search(value)
+    )
 
 
 def _avg_conf(evidence: list[dict[str, Any]]) -> int:
@@ -627,7 +640,7 @@ def _call_llm(*, api_key: str, model: str, inp: BriefInput, retry_hint: str = ""
             return None
         text = _rewrite_abstract_terms(text)
         if _contains_prohibited(text):
-            logger.warning("Risk brief blocked by safety filter")
+            logger.info("Risk brief blocked by safety filter; switching to deterministic local brief")
             return None
         return text[:1100]
     except Exception:

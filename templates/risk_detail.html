@@ -106,6 +106,9 @@
       <p class="mt-2 text-sm text-slate-300 max-w-3xl clamp-3">
         {{ vm.details.exec_brief if vm.details.exec_brief else "No executive brief available yet." }}
       </p>
+      {% set reasoning = vm.risk.reasoning %}
+      {% set reasoning_compact = false %}
+      {% include "partials/risk_reasoning_block.html" %}
     </section>
 
     <section class="panel p-6">
