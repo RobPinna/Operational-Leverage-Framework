@@ -1124,7 +1124,7 @@ def create_demo_scenario(db: Session, scenario_name: str) -> Assessment:
     rag_min_ratio = float(rag_cfg.get("min_ratio", 0.70))
     rag_meta = build_rag_index(assessment.id)
     rag_plan = run_query_plan(assessment.id, top_k=rag_top_k, min_ratio=rag_min_ratio)
-    hypothesis_cards = generate_hypotheses(assessment.id, rag_plan, allow_local_fallback=True)
+    hypothesis_cards = generate_hypotheses(assessment.id, rag_plan, allow_local_fallback=False)
     correlation_count = build_cross_signal_correlations(db, assessment)
 
     assessment.collect_log_json = to_json(

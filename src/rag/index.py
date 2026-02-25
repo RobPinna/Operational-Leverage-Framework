@@ -143,7 +143,7 @@ def build_index(assessment_id: int) -> dict:
                 select(Document).where(
                     Document.assessment_id == assessment_id,
                     Document.extracted_text != "",
-                )
+                ).order_by(Document.id.asc())
             )
             .scalars()
             .all()
@@ -253,7 +253,15 @@ def search(assessment_id: int, query: str, top_k: int = DEFAULT_TOP_K) -> list[d
             }
         )
 
-    ranked.sort(key=lambda row: row["score"], reverse=True)
+    ranked.sort(
+        key=lambda row: (
+            -float(row.get("score", 0.0) or 0.0),
+            str(row.get("url", "")),
+            str(row.get("title", "")),
+            str(row.get("snippet", "")),
+            int(row.get("passage_id", 0) or 0),
+        )
+    )
     return ranked[: max(1, int(top_k))]
 
 
@@ -297,6 +305,15 @@ def run_query_plan(assessment_id: int, top_k: int = DEFAULT_TOP_K, min_ratio: fl
         top1 = float(candidates[0].get("score", 0.0) or 0.0)
         threshold = top1 * float(min_ratio or 0.70)
         strong = [r for r in candidates if float(r.get("score", 0.0) or 0.0) >= threshold]
+        strong.sort(
+            key=lambda row: (
+                -float(row.get("score", 0.0) or 0.0),
+                str(row.get("url", "")),
+                str(row.get("title", "")),
+                str(row.get("snippet", "")),
+                int(row.get("passage_id", 0) or 0),
+            )
+        )
         strong = strong[: max(1, int(top_k))]
 
         if len(strong) < 1:

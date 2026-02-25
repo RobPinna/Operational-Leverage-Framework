@@ -1030,7 +1030,7 @@ def wizard_step5(
             assessment.id, top_k=int(rag_cfg.get("top_k", 4)), min_ratio=float(rag_cfg.get("min_ratio", 0.70))
         )
         update_progress(assessment.id, "assess", "Generating evidence-first risk scenarios...")
-        generate_hypotheses(assessment.id, plan, allow_local_fallback=True)
+        generate_hypotheses(assessment.id, plan, allow_local_fallback=False)
         # Process-based trust workflow map (phase 1): derives workflow nodes and trust friction scoring.
         try:
             from app.services.trust_workflows import generate_trust_workflow_map

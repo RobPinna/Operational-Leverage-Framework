@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 import hashlib
 import json
 import logging
@@ -8,6 +9,7 @@ import random
 import re
 import time
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -67,6 +69,10 @@ LLM_BACKOFF_BASE_SECONDS = 3.0
 LLM_BACKOFF_JITTER_SECONDS = 1.0
 LLM_BACKOFF_MAX_SECONDS = 45.0
 LLM_QUOTA_COOLDOWN_SECONDS = 900
+LLM_STABLE_TEMPERATURE = 0.0
+LLM_STABLE_TOP_P = 1.0
+REASONER_PROMPT_VERSION = "2026-02-25-stable-v1"
+REASONER_ENGINE_VERSION = "stable-by-default-v2"
 
 _llm_quota_block_until = 0.0
 _llm_quota_last_notice = 0.0
@@ -707,6 +713,106 @@ def _normalize_sections(retrieved_passages_by_query: Any) -> list[dict]:
     return []
 
 
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _normalized_sections_for_fingerprint(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized_sections: list[dict[str, Any]] = []
+    for section in sections:
+        query_id = str(section.get("query_id", "")).strip()
+        query_text = str(section.get("query", "")).strip()
+        citations: list[dict[str, Any]] = []
+        for candidate in section.get("findings_candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            for cite in candidate.get("citations") or []:
+                if not isinstance(cite, dict):
+                    continue
+                citations.append(
+                    {
+                        "doc_id": int(cite["doc_id"]) if str(cite.get("doc_id", "")).isdigit() else None,
+                        "url": str(cite.get("url", "")).strip(),
+                        "title": str(cite.get("title", "")).strip(),
+                        "snippet": str(cite.get("snippet", "")).strip(),
+                        "score": round(float(cite.get("score", 0.0) or 0.0), 6),
+                    }
+                )
+        citations.sort(
+            key=lambda c: (
+                -float(c.get("score", 0.0) or 0.0),
+                str(c.get("url", "")),
+                str(c.get("title", "")),
+                str(c.get("snippet", "")),
+                int(c.get("doc_id", 0) or 0),
+            )
+        )
+        normalized_sections.append(
+            {
+                "query_id": query_id,
+                "query": query_text,
+                "top1_score": round(float(section.get("top1_score", 0.0) or 0.0), 6),
+                "threshold_score": round(float(section.get("threshold_score", 0.0) or 0.0), 6),
+                "min_ratio": round(float(section.get("min_ratio", 0.0) or 0.0), 6),
+                "information_gaps": sorted([str(x).strip() for x in (section.get("information_gaps") or []) if str(x).strip()]),
+                "citations": citations,
+            }
+        )
+    normalized_sections.sort(key=lambda s: (str(s.get("query_id", "")), str(s.get("query", ""))))
+    return normalized_sections
+
+
+def _compute_input_fingerprint(
+    *,
+    assessment_id: int,
+    sections: list[dict[str, Any]],
+    model: str,
+    confidence_threshold: int,
+    allow_local_fallback: bool,
+    force_local_mode: bool,
+) -> str:
+    payload = {
+        "engine_version": REASONER_ENGINE_VERSION,
+        "prompt_version": REASONER_PROMPT_VERSION,
+        "assessment_id": int(assessment_id),
+        "model": str(model or ""),
+        "confidence_threshold": int(confidence_threshold),
+        "temperature": LLM_STABLE_TEMPERATURE,
+        "top_p": LLM_STABLE_TOP_P,
+        "allow_local_fallback": bool(allow_local_fallback),
+        "force_local_mode": bool(force_local_mode),
+        "sections": _normalized_sections_for_fingerprint(sections),
+    }
+    return hashlib.sha256(_stable_json(payload).encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _snapshot_dir() -> Path:
+    path = get_settings().runtime_dir / "exports" / "hypothesis_cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _snapshot_path(assessment_id: int, fingerprint: str) -> Path:
+    safe_fp = str(fingerprint or "").strip().lower()[:128]
+    return _snapshot_dir() / f"assessment_{int(assessment_id)}_{safe_fp}.json"
+
+
+def _load_snapshot(assessment_id: int, fingerprint: str) -> dict[str, Any] | None:
+    path = _snapshot_path(assessment_id, fingerprint)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to load hypothesis snapshot for assessment %s", assessment_id)
+        return None
+    if not isinstance(data, dict):
+        return None
+    if str(data.get("input_fingerprint", "")).strip().lower() != str(fingerprint).strip().lower():
+        return None
+    return data
+
+
 def _extract_evidence(section: dict) -> list[EvidenceRef]:
     refs: list[EvidenceRef] = []
     findings_candidates = section.get("findings_candidates") or []
@@ -1203,7 +1309,16 @@ def _filter_evidence_relevance(
             candidates = list(evidence_refs or [])
 
         if candidates:
-            candidates = sorted(candidates, key=lambda x: float(x.score or 0.0), reverse=True)
+            candidates = sorted(
+                candidates,
+                key=lambda x: (
+                    -float(x.score or 0.0),
+                    str(x.url or ""),
+                    str(x.title or ""),
+                    str(x.snippet or ""),
+                    int(x.doc_id or 0),
+                ),
+            )
             soft_min = (0.50 * top1) if top1 > 0 else 0.0
             soft = [ev for ev in candidates if (float(ev.score or 0.0) >= soft_min if soft_min > 0 else True)]
             chosen = soft if soft else candidates
@@ -1288,7 +1403,15 @@ def _merge_scenarios(candidates: list[_ScenarioCandidate]) -> list[_ScenarioCand
     Merge near-duplicate scenarios (same canonical key or similar evidence).
     """
     merged: list[_ScenarioCandidate] = []
-    for cand in sorted(candidates, key=lambda c: (c.conf_score, len(c.evidence_refs)), reverse=True):
+    for cand in sorted(
+        candidates,
+        key=lambda c: (
+            -int(c.conf_score or 0),
+            -len(c.evidence_refs or []),
+            str(c.query_id or ""),
+            str(c.payload.get("risk_type", "") if isinstance(c.payload, dict) else ""),
+        ),
+    ):
         fp, urlset = _evidence_fingerprint(cand.evidence_refs)
         ckey = _canonical_key(payload=cand.payload, meta=cand.meta)
 
@@ -1518,7 +1641,7 @@ def _call_reasoner_llm(
         key = (r.signal_type or "").strip().upper() or "UNKNOWN"
         counts[key] = counts.get(key, 0) + 1
     signal_summary = ", ".join(
-        f"{SIGNAL_LABELS.get(k, k)}={v}" for k, v in sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        f"{SIGNAL_LABELS.get(k, k)}={v}" for k, v in sorted(counts.items(), key=lambda x: (-x[1], x[0]))
     )
     system_prompt = (
         "You are a senior defensive cyber risk analyst and CTI advisor. "
@@ -1553,7 +1676,8 @@ def _call_reasoner_llm(
     )
     payload = {
         "model": model,
-        "temperature": 0.1,
+        "temperature": LLM_STABLE_TEMPERATURE,
+        "top_p": LLM_STABLE_TOP_P,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -1709,6 +1833,8 @@ def _create_hypothesis_row(
     merged_query_ids: list[str] | None = None,
     relevance_debug: dict[str, Any] | None = None,
     trust_friction: bool | None = None,
+    input_fingerprint: str = "",
+    model: str = "",
 ) -> Hypothesis | None:
     risk_type = str(payload.get("risk_type", "other")).strip().lower()
     if risk_type not in SAFE_RISK_TYPES:
@@ -1887,6 +2013,10 @@ def _create_hypothesis_row(
         signal_counts_for_storage = dict(meta.get("signal_counts", {}) or {})
         signal_counts_for_storage["__merged_from__"] = int(merged_from or 1)
         signal_counts_for_storage["__merged_query_ids__"] = merged_query_ids or ([query_id] if query_id else [])
+        signal_counts_for_storage["__input_fingerprint__"] = str(input_fingerprint or "")
+        signal_counts_for_storage["__engine_version__"] = REASONER_ENGINE_VERSION
+        signal_counts_for_storage["__prompt_version__"] = REASONER_PROMPT_VERSION
+        signal_counts_for_storage["__llm_model__"] = str(model or "")
         if relevance_debug:
             signal_counts_for_storage["__debug__"] = {"relevance": relevance_debug}
         if bool(meta.get("baseline_exposure", False)):
@@ -2025,6 +2155,178 @@ def _clear_existing_outputs(assessment_id: int) -> None:
         db.commit()
 
 
+def _cards_from_rows(rows: list[Hypothesis]) -> list[HypothesisCard]:
+    cards: list[HypothesisCard] = []
+    for row in rows:
+        cards.append(
+            HypothesisCard(
+                id=int(row.id),
+                risk_type=str(row.risk_type or "other"),
+                title=str(row.title or ""),
+                description=str(row.description or ""),
+                likelihood=str(row.likelihood or "med"),
+                likelihood_rationale=str(row.likelihood_rationale or ""),
+                impact=str(row.impact or "ops"),
+                impact_rationale=str(row.impact_rationale or ""),
+                evidence_refs=[EvidenceRef(**item) for item in json.loads(row.evidence_refs_json or "[]")],
+                assumptions=json.loads(row.assumptions_json or "[]"),
+                gaps_to_verify=json.loads(row.gaps_to_verify_json or "[]"),
+                defensive_actions=json.loads(row.defensive_actions_json or "[]"),
+            )
+        )
+    return cards
+
+
+def _row_input_fingerprint(row: Hypothesis) -> str:
+    try:
+        blob = json.loads(row.signal_counts_json or "{}")
+    except Exception:
+        return ""
+    if not isinstance(blob, dict):
+        return ""
+    return str(blob.get("__input_fingerprint__", "")).strip()
+
+
+def _persist_snapshot(
+    *,
+    assessment_id: int,
+    input_fingerprint: str,
+    model: str,
+) -> None:
+    with SessionLocal() as db:
+        rows = (
+            db.execute(
+                select(Hypothesis)
+                .where(Hypothesis.assessment_id == assessment_id)
+                .order_by(Hypothesis.id.asc())
+            )
+            .scalars()
+            .all()
+        )
+        gaps = (
+            db.execute(select(Gap).where(Gap.assessment_id == assessment_id).order_by(Gap.id.asc()))
+            .scalars()
+            .all()
+        )
+
+    payload = {
+        "assessment_id": int(assessment_id),
+        "input_fingerprint": str(input_fingerprint or ""),
+        "engine_version": REASONER_ENGINE_VERSION,
+        "prompt_version": REASONER_PROMPT_VERSION,
+        "model": str(model or ""),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "hypotheses": [
+            {
+                "query_id": str(row.query_id or ""),
+                "risk_type": str(row.risk_type or "other"),
+                "primary_risk_type": str(row.primary_risk_type or ""),
+                "risk_vector_summary": str(row.risk_vector_summary or ""),
+                "baseline_tag": bool(row.baseline_tag),
+                "status": str(row.status or "WATCHLIST"),
+                "plausibility_score": int(row.plausibility_score or 0),
+                "potential_impact_score": int(row.potential_impact_score or 0),
+                "integrity_flags_json": str(row.integrity_flags_json or "{}"),
+                "severity": int(row.severity or 3),
+                "title": str(row.title or ""),
+                "description": str(row.description or ""),
+                "likelihood": str(row.likelihood or "med"),
+                "likelihood_rationale": str(row.likelihood_rationale or ""),
+                "impact": str(row.impact or "ops"),
+                "impact_rationale": str(row.impact_rationale or ""),
+                "evidence_refs_json": str(row.evidence_refs_json or "[]"),
+                "assumptions_json": str(row.assumptions_json or "[]"),
+                "gaps_to_verify_json": str(row.gaps_to_verify_json or "[]"),
+                "defensive_actions_json": str(row.defensive_actions_json or "[]"),
+                "confidence": int(row.confidence or 0),
+                "signal_diversity": int(row.signal_diversity or 0),
+                "signal_counts_json": str(row.signal_counts_json or "{}"),
+                "missing_signals_json": str(row.missing_signals_json or "[]"),
+                "timeline_json": str(row.timeline_json or "[]"),
+            }
+            for row in rows
+        ],
+        "gaps": [
+            {
+                "query_id": str(gap.query_id or ""),
+                "title": str(gap.title or ""),
+                "description": str(gap.description or ""),
+                "evidence_count": int(gap.evidence_count or 0),
+                "avg_confidence": int(gap.avg_confidence or 0),
+            }
+            for gap in gaps
+        ],
+    }
+
+    path = _snapshot_path(assessment_id, input_fingerprint)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(_stable_json(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _restore_snapshot(assessment_id: int, snapshot: dict[str, Any]) -> list[HypothesisCard]:
+    with SessionLocal() as db:
+        db.execute(delete(Hypothesis).where(Hypothesis.assessment_id == assessment_id))
+        db.execute(delete(Gap).where(Gap.assessment_id == assessment_id))
+        db.commit()
+
+        for gap in snapshot.get("gaps") or []:
+            if not isinstance(gap, dict):
+                continue
+            db.add(
+                Gap(
+                    assessment_id=assessment_id,
+                    query_id=str(gap.get("query_id", ""))[:16],
+                    title=str(gap.get("title", ""))[:255],
+                    description=str(gap.get("description", "")),
+                    evidence_count=max(0, int(gap.get("evidence_count", 0) or 0)),
+                    avg_confidence=max(0, min(100, int(gap.get("avg_confidence", 0) or 0))),
+                )
+            )
+
+        for row in snapshot.get("hypotheses") or []:
+            if not isinstance(row, dict):
+                continue
+            db.add(
+                Hypothesis(
+                    assessment_id=assessment_id,
+                    query_id=str(row.get("query_id", ""))[:16],
+                    risk_type=str(row.get("risk_type", "other")),
+                    primary_risk_type=str(row.get("primary_risk_type", "")),
+                    risk_vector_summary=str(row.get("risk_vector_summary", "")),
+                    baseline_tag=bool(row.get("baseline_tag", False)),
+                    status=str(row.get("status", "WATCHLIST")),
+                    plausibility_score=max(0, min(100, int(row.get("plausibility_score", 0) or 0))),
+                    potential_impact_score=max(0, min(100, int(row.get("potential_impact_score", 0) or 0))),
+                    integrity_flags_json=str(row.get("integrity_flags_json", "{}")),
+                    severity=max(1, min(5, int(row.get("severity", 3) or 3))),
+                    title=str(row.get("title", ""))[:255],
+                    description=str(row.get("description", "")),
+                    likelihood=str(row.get("likelihood", "med")),
+                    likelihood_rationale=str(row.get("likelihood_rationale", "")),
+                    impact=str(row.get("impact", "ops")),
+                    impact_rationale=str(row.get("impact_rationale", "")),
+                    evidence_refs_json=str(row.get("evidence_refs_json", "[]")),
+                    assumptions_json=str(row.get("assumptions_json", "[]")),
+                    gaps_to_verify_json=str(row.get("gaps_to_verify_json", "[]")),
+                    defensive_actions_json=str(row.get("defensive_actions_json", "[]")),
+                    confidence=max(0, min(100, int(row.get("confidence", 0) or 0))),
+                    signal_diversity=max(0, int(row.get("signal_diversity", 0) or 0)),
+                    signal_counts_json=str(row.get("signal_counts_json", "{}")),
+                    missing_signals_json=str(row.get("missing_signals_json", "[]")),
+                    timeline_json=str(row.get("timeline_json", "[]")),
+                )
+            )
+
+        db.commit()
+        restored_rows = (
+            db.execute(select(Hypothesis).where(Hypothesis.assessment_id == assessment_id).order_by(Hypothesis.id.asc()))
+            .scalars()
+            .all()
+        )
+    return _cards_from_rows(restored_rows)
+
+
 def _load_llm_config() -> tuple[str, str | None]:
     """Return selected model and API key from DB settings, with env fallback."""
     model_key_name = "__llm_reasoner_model__"
@@ -2082,7 +2384,6 @@ def generate_hypotheses(
 ) -> list[HypothesisCard]:
     """Generate evidence-first defensive risk scenarios and persist hypotheses/gaps."""
     sections = _normalize_sections(retrieved_passages_by_query)
-    _clear_existing_outputs(assessment_id)
 
     with SessionLocal() as db:
         assessment = db.get(Assessment, assessment_id)
@@ -2096,6 +2397,31 @@ def generate_hypotheses(
     configured_model, configured_api_key = _load_llm_config()
     model, force_local_mode = _resolve_openai_model(configured_model)
     api_key = (configured_api_key or "").strip()
+    input_fingerprint = _compute_input_fingerprint(
+        assessment_id=assessment_id,
+        sections=sections,
+        model=model,
+        confidence_threshold=threshold,
+        allow_local_fallback=allow_local_fallback,
+        force_local_mode=force_local_mode,
+    )
+
+    with SessionLocal() as db:
+        existing_rows = (
+            db.execute(select(Hypothesis).where(Hypothesis.assessment_id == assessment_id).order_by(Hypothesis.id.asc()))
+            .scalars()
+            .all()
+        )
+    if existing_rows and all(_row_input_fingerprint(row) == input_fingerprint for row in existing_rows):
+        logger.info("Reusing existing stable hypotheses for assessment %s", assessment_id)
+        return _cards_from_rows(existing_rows)
+
+    cached_snapshot = _load_snapshot(assessment_id, input_fingerprint)
+    if cached_snapshot:
+        logger.info("Replaying stable hypothesis snapshot for assessment %s", assessment_id)
+        return _restore_snapshot(assessment_id, cached_snapshot)
+
+    _clear_existing_outputs(assessment_id)
 
     admin_debug = bool(getattr(settings, "admin_debug_risk", False))
     trust_friction = _trust_friction_for_assessment(assessment_id)
@@ -2105,6 +2431,7 @@ def generate_hypotheses(
         query_id = str(section.get("query_id", "Q?"))[:16]
         query_text = str(section.get("query", ""))[:500]
         raw_evidence = _extract_evidence(section)
+        section_gaps = [str(x) for x in section.get("information_gaps", []) if str(x).strip()]
 
         if len(raw_evidence) < 2:
             _save_gap(
@@ -2123,29 +2450,26 @@ def generate_hypotheses(
                 query_text=query_text,
                 evidence_refs=raw_evidence,
                 avg_conf=_avg_confidence(raw_evidence),
-                section_gaps=[str(x) for x in section.get("information_gaps", []) if str(x).strip()],
+                section_gaps=section_gaps,
                 sector=sector,
             )
         elif not api_key:
-            if allow_local_fallback:
-                payload = _local_reasoner_payload(
-                    query_id=query_id,
-                    query_text=query_text,
-                    evidence_refs=raw_evidence,
-                    avg_conf=_avg_confidence(raw_evidence),
-                    section_gaps=[str(x) for x in section.get("information_gaps", []) if str(x).strip()],
-                    sector=sector,
-                )
-            else:
-                _save_gap(
-                    assessment_id=assessment_id,
-                    query_id=query_id,
-                    title=f"{query_id} generation skipped",
-                    description="LLM API key not configured for selected model.",
-                    evidence_count=len(raw_evidence),
-                    avg_confidence=_avg_confidence(raw_evidence),
-                )
-                continue
+            _save_gap(
+                assessment_id=assessment_id,
+                query_id=query_id,
+                title=f"{query_id} generation degraded",
+                description="LLM API key not configured for selected model. Using deterministic local synthesis.",
+                evidence_count=len(raw_evidence),
+                avg_confidence=_avg_confidence(raw_evidence),
+            )
+            payload = _local_reasoner_payload(
+                query_id=query_id,
+                query_text=query_text,
+                evidence_refs=raw_evidence,
+                avg_conf=_avg_confidence(raw_evidence),
+                section_gaps=section_gaps,
+                sector=sector,
+            )
         else:
             payload = _call_reasoner_llm(
                 api_key=api_key,
@@ -2160,12 +2484,19 @@ def generate_hypotheses(
                 _save_gap(
                     assessment_id=assessment_id,
                     query_id=query_id,
-                    title=f"{query_id} generation failed",
-                    description="LLM call failed or returned invalid payload.",
+                    title=f"{query_id} generation degraded",
+                    description="LLM call failed or returned invalid payload. Using deterministic local synthesis.",
                     evidence_count=len(raw_evidence),
                     avg_confidence=_avg_confidence(raw_evidence),
                 )
-                continue
+                payload = _local_reasoner_payload(
+                    query_id=query_id,
+                    query_text=query_text,
+                    evidence_refs=raw_evidence,
+                    avg_conf=_avg_confidence(raw_evidence),
+                    section_gaps=section_gaps,
+                    sector=sector,
+                )
 
         if not payload:
             continue
@@ -2201,8 +2532,8 @@ def generate_hypotheses(
                 evidence_count=int(weighted_count),
                 avg_confidence=int(conf_score),
             )
-            if allow_local_fallback and filtered:
-                # Keep weak scenarios as watchlist candidates instead of returning no risks.
+            if filtered:
+                # Keep weak scenarios as deterministic watchlist/baseline candidates instead of returning no risks.
                 if isinstance(meta, dict):
                     meta["relaxed_gate"] = "weighted_count_lt_2"
                 candidates.append(
@@ -2229,7 +2560,7 @@ def generate_hypotheses(
                 evidence_count=len(filtered),
                 avg_confidence=int(conf_score),
             )
-            if allow_local_fallback and filtered:
+            if filtered:
                 if isinstance(meta, dict):
                     meta["relaxed_gate"] = "confidence_below_threshold"
                 candidates.append(
@@ -2258,6 +2589,14 @@ def generate_hypotheses(
         )
 
     merged_candidates = _merge_scenarios(candidates)
+    strong_candidates = [c for c in merged_candidates if not str((c.meta or {}).get("relaxed_gate", "")).strip()]
+    weak_candidates = [c for c in merged_candidates if str((c.meta or {}).get("relaxed_gate", "")).strip()]
+    if strong_candidates:
+        # Keep a small deterministic weak tail for context without flooding noisy outputs.
+        merged_candidates = strong_candidates + weak_candidates[:2]
+    else:
+        # For weak-only runs, cap to top 3 stable watchlist/baseline hypotheses.
+        merged_candidates = weak_candidates[:3]
 
     cards: list[HypothesisCard] = []
     for cand in merged_candidates:
@@ -2271,7 +2610,32 @@ def generate_hypotheses(
             merged_query_ids=cand.merged_query_ids or [primary_qid],
             relevance_debug=cand.relevance_debug,
             trust_friction=trust_friction,
+            input_fingerprint=input_fingerprint,
+            model=model,
         )
+        if not row:
+            # If LLM narrative violates safety/field guards, fall back to deterministic local wording
+            # while preserving the same evidence set and stable fingerprint.
+            local_payload = _local_reasoner_payload(
+                query_id=primary_qid,
+                query_text=cand.query_text,
+                evidence_refs=cand.evidence_refs,
+                avg_conf=int(cand.conf_score or 0),
+                section_gaps=_safe_list(cand.payload.get("gaps_to_verify"), max_items=8),
+                sector=sector,
+            )
+            row = _create_hypothesis_row(
+                assessment_id=assessment_id,
+                query_id=primary_qid,
+                payload=local_payload,
+                evidence_refs=cand.evidence_refs,
+                merged_from=int(cand.merged_from or 1),
+                merged_query_ids=cand.merged_query_ids or [primary_qid],
+                relevance_debug=cand.relevance_debug,
+                trust_friction=trust_friction,
+                input_fingerprint=input_fingerprint,
+                model=model,
+            )
         if not row:
             _save_gap(
                 assessment_id=assessment_id,
@@ -2299,5 +2663,14 @@ def generate_hypotheses(
                 defensive_actions=json.loads(row.defensive_actions_json or "[]"),
             )
         )
+
+    try:
+        _persist_snapshot(
+            assessment_id=assessment_id,
+            input_fingerprint=input_fingerprint,
+            model=model,
+        )
+    except Exception:
+        logger.exception("Failed to persist hypothesis snapshot for assessment %s", assessment_id)
 
     return cards
