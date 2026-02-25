@@ -592,6 +592,22 @@ def _elevated_score(*, impact_band: str, plausibility_score: int, signal_coverag
     return (0.45 * i) + (0.45 * p) + (0.10 * cov)
 
 
+def _elevated_sort_tuple(item: dict[str, Any]) -> tuple[int, int, int, int, int, int, int]:
+    """
+    Keep ordering aligned with the primary UI badges:
+    Impact -> Likelihood -> Evidence strength (%) -> tie-breakers.
+    """
+    return (
+        IMPACT_SCORE.get(str(item.get("impact_band", "MED")).upper(), 2),
+        LIKELIHOOD_SCORE.get(str(item.get("likelihood", "med")).lower(), 2),
+        int(item.get("confidence", 0) or 0),
+        int(item.get("plausibility_score", 0) or 0),
+        int(item.get("signal_coverage", 0) or 0),
+        int(item.get("evidence_refs_count", 0) or 0),
+        int(item.get("id", 0) or 0),
+    )
+
+
 def _watchlist_score(*, potential_impact_score: int, plausibility_score: int) -> float:
     imp = float(max(0, min(100, int(potential_impact_score or 0))))
     pla = float(max(0, min(100, int(plausibility_score or 0))))
@@ -989,7 +1005,6 @@ def get_ranked_risks(
     evidence_sets: dict[str, list[dict[str, Any]]] = {}
     risk_summaries: list[dict[str, Any]] = []
     hypotheses_by_id: dict[int, Hypothesis] = {}
-    status_updates = 0
 
     for h in hypotheses:
         hypotheses_by_id[int(h.id)] = h
@@ -1055,10 +1070,8 @@ def get_ranked_risks(
             sector=str(assessment.sector or ""),
             risk_type=str(h.risk_type or ""),
         )
-        conf = int(h.confidence or 0)
-        if conf <= 0:
-            conf = int(calc_conf)
-        evidence_strength_pct = max(1, min(100, int(conf)))
+        conf = max(1, min(100, int(calc_conf)))
+        evidence_strength_pct = int(conf)
 
         counts = meta.get("signal_counts") if isinstance(meta.get("signal_counts"), dict) else {}
         if not counts and parsed.counts:
@@ -1095,10 +1108,6 @@ def get_ranked_risks(
         if not isinstance(missing_signals, list):
             missing_signals = []
         missing_signal_types_count = len({str(x).strip().lower() for x in missing_signals if str(x).strip()})
-
-        existing_status = str(getattr(h, "status", "") or "").strip().upper()
-        if existing_status not in RISK_STATUS_VALUES:
-            existing_status = ""
 
         # Repetition/policy checks for plausibility calibration.
         url_counts: dict[str, int] = {}
@@ -1304,32 +1313,6 @@ def get_ranked_risks(
             if evidence_strength_pct < MIN_EVIDENCE_STRENGTH_ELEVATED:
                 missing_gate_reasons.append("Weak evidence")
 
-        row_changed = False
-        if existing_status != status_value:
-            try:
-                h.status = status_value
-                row_changed = True
-            except Exception:
-                pass
-        try:
-            if int(getattr(h, "plausibility_score", 0) or 0) != int(plausibility_score):
-                h.plausibility_score = int(plausibility_score)
-                row_changed = True
-            if int(getattr(h, "potential_impact_score", 0) or 0) != int(potential_impact_score):
-                h.potential_impact_score = int(potential_impact_score)
-                row_changed = True
-            if str(getattr(h, "likelihood", "med") or "med").strip().lower() != str(likelihood):
-                h.likelihood = str(likelihood)
-                row_changed = True
-            derived_sev = 4 if impact_band == "HIGH" else (3 if impact_band == "MED" else 2)
-            if int(getattr(h, "severity", 3) or 3) != int(derived_sev):
-                h.severity = int(derived_sev)
-                row_changed = True
-        except Exception:
-            pass
-        if row_changed:
-            status_updates += 1
-
         primary_low = primary_risk_type.strip().lower()
         impact_value = IMPACT_SCORE.get((impact_band or "MED").upper(), 2)
         likelihood_value = LIKELIHOOD_SCORE.get((likelihood or "med").lower(), 2)
@@ -1422,13 +1405,6 @@ def get_ranked_risks(
         }
         risk_summaries.append(summary)
 
-    if status_updates > 0:
-        try:
-            db.commit()
-        except Exception:
-            logger.exception("Failed to persist computed risk status for assessment %s", assessment_id)
-            db.rollback()
-
     by_status: dict[str, list[dict[str, Any]]] = {"ELEVATED": [], "WATCHLIST": [], "BASELINE": []}
     for r in risk_summaries:
         st = str(r.get("status", "WATCHLIST")).upper()
@@ -1436,14 +1412,7 @@ def get_ranked_risks(
             st = "WATCHLIST"
         by_status[st].append(r)
 
-    by_status["ELEVATED"].sort(
-        key=lambda x: (
-            float(x.get("score_elevated", 0.0)),
-            float(x.get("priority_score", 0.0)),
-            int(x.get("id", 0) or 0),
-        ),
-        reverse=True,
-    )
+    by_status["ELEVATED"].sort(key=_elevated_sort_tuple, reverse=True)
     by_status["WATCHLIST"].sort(
         key=lambda x: (
             float(x.get("score_watchlist", 0.0)),
@@ -1461,12 +1430,13 @@ def get_ranked_risks(
         reverse=True,
     )
 
-    # Legacy include_baseline compatibility: when true and status is not explicitly requested,
-    # merge baseline into the default elevated listing.
+    # Optional compatibility mode: include baseline alongside elevated in the main tab.
     status_tab = str(status or "ELEVATED").strip().upper()
     if status_tab not in RISK_STATUS_VALUES:
         status_tab = "ELEVATED"
     tab_rows = list(by_status[status_tab])
+    if bool(include_baseline) and status_tab == "ELEVATED":
+        tab_rows = tab_rows + list(by_status["BASELINE"])
 
     if risk_type:
         tab_rows = [r for r in tab_rows if str(r.get("risk_type", "")) == str(risk_type)]
@@ -2132,6 +2102,10 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
             "details": {},
         }
 
+    ranked_snapshot = get_ranked_risks(db, assessment)
+    ranked_all = list(ranked_snapshot.get("all_unfiltered") or [])
+    ranked_row = next((item for item in ranked_all if int(item.get("id", 0) or 0) == rid), None)
+
     # Prefetch documents referenced by this risk and by workflow nodes.
     refs = from_json(row.evidence_refs_json or "[]", [])
     if not isinstance(refs, list):
@@ -2198,7 +2172,7 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     calc_conf, meta = compute_hypothesis_confidence(
         ev_items, base_avg=base_avg, sector=str(assessment.sector or ""), risk_type=str(row.risk_type or "")
     )
-    conf = int(row.confidence or 0) or int(calc_conf)
+    conf = max(1, min(100, int(calc_conf)))
     counts = meta.get("signal_counts") if isinstance(meta.get("signal_counts"), dict) else {}
     if not counts and parsed.counts:
         counts = dict(parsed.counts)
@@ -2215,6 +2189,12 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
 
     impact_band = _impact_band_from_severity(int(row.severity or 3))
     likelihood = (str(row.likelihood or "med").strip().lower() or "med")[:8]
+    current_status = str(getattr(row, "status", "") or "WATCHLIST").upper()
+    if isinstance(ranked_row, dict):
+        conf = max(1, min(100, int(ranked_row.get("confidence", conf) or conf)))
+        impact_band = str(ranked_row.get("impact_band", impact_band) or impact_band).upper()
+        likelihood = str(ranked_row.get("likelihood", likelihood) or likelihood).strip().lower()[:8] or "med"
+        current_status = str(ranked_row.get("status", current_status) or current_status).upper()
     primary_risk_type = str(getattr(row, "primary_risk_type", "") or "").strip()
     outcome = _risk_outcome_label(
         str(row.risk_type or ""), sector=str(assessment.sector or ""), process_flags=parsed.process_flags
@@ -2343,7 +2323,7 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     risk = {
         "id": rid,
         "risk_type": str(row.risk_type or "other"),
-        "status": str(getattr(row, "status", "") or "WATCHLIST").upper(),
+        "status": current_status,
         "primary_risk_type": primary_risk_type,
         "risk_vector_summary": risk_vector_summary,
         "baseline_tag": bool(getattr(row, "baseline_tag", False)),

@@ -81,6 +81,7 @@ def list_risks(
                 "why": str(r.get("why_matters", "") or "Open for evidence and defensive controls.")[:180],
                 "impact_band": str(r.get("impact_band", "MED")),
                 "likelihood": str(r.get("likelihood", "med")),
+                "evidence_strength": str(r.get("evidence_strength", "WEAK")),
                 "evidence_strength_score": int(r.get("confidence", 0) or 0),
                 "signal_coverage": int(r.get("signal_coverage", 0) or 0),
                 "evidence_count": int(r.get("evidence_refs_count", 0) or 0),

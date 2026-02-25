@@ -2051,15 +2051,17 @@ def _load_llm_config() -> tuple[str, str | None]:
             .first()
         )
 
+    settings = get_settings()
+    env_model = (settings.openai_reasoner_model or "gpt-4.1").strip()
+    env_api_key = (settings.openai_api_key or "").strip() or None
     if model_row:
         decoded_model = deobfuscate_secret(model_row.api_key_obfuscated) if model_row.api_key_obfuscated else None
-        model = (decoded_model or "gpt-4.1").strip()
+        model = (decoded_model or env_model or "gpt-4.1").strip()
         api_key = deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else None
-        return model, api_key
+        return model, (api_key or env_api_key)
 
-    settings = get_settings()
-    model = (settings.openai_reasoner_model or "gpt-4.1").strip()
-    api_key = (settings.openai_api_key or "").strip() or None
+    model = env_model
+    api_key = env_api_key
     return model, api_key
 
 

@@ -210,18 +210,20 @@ def test_connector(db: Session, connector_name: str) -> tuple[bool, str]:
 
 
 def get_llm_state(db: Session) -> dict:
+    settings = get_settings()
+    env_api_key = (settings.openai_api_key or "").strip()
     model_row = get_connector_setting(db, LLM_MODEL_SETTING_NAME)
     api_row = get_connector_setting(db, LLM_API_SETTING_NAME)
     if not model_row:
         return {
             "model": "gpt-4.1",
-            "has_api_key": bool(api_row and api_row.api_key_obfuscated),
+            "has_api_key": bool((api_row and api_row.api_key_obfuscated) or env_api_key),
         }
     decoded = deobfuscate_secret(model_row.api_key_obfuscated) if model_row.api_key_obfuscated else None
     model = decoded if decoded in LLM_MODEL_OPTIONS else "gpt-4.1"
     return {
         "model": model,
-        "has_api_key": bool(api_row and api_row.api_key_obfuscated),
+        "has_api_key": bool((api_row and api_row.api_key_obfuscated) or env_api_key),
     }
 
 
@@ -252,18 +254,19 @@ def save_llm_setting(db: Session, model: str, api_key: str | None = None, clear_
 
 
 def get_llm_runtime_config(db: Session) -> dict:
+    settings = get_settings()
+    env_model = (settings.openai_reasoner_model or "gpt-4.1").strip()
+    env_api_key = (settings.openai_api_key or "").strip() or None
     model_row = get_connector_setting(db, LLM_MODEL_SETTING_NAME)
     api_row = get_connector_setting(db, LLM_API_SETTING_NAME)
     if not model_row:
         return {
-            "model": "gpt-4.1",
-            "api_key": deobfuscate_secret(api_row.api_key_obfuscated)
-            if (api_row and api_row.api_key_obfuscated)
-            else None,
+            "model": env_model or "gpt-4.1",
+            "api_key": deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else env_api_key,
         }
     decoded_model = deobfuscate_secret(model_row.api_key_obfuscated) if model_row.api_key_obfuscated else None
-    model = decoded_model if decoded_model in LLM_MODEL_OPTIONS else "gpt-4.1"
-    api_key = deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else None
+    model = decoded_model if decoded_model in LLM_MODEL_OPTIONS else (env_model or "gpt-4.1")
+    api_key = deobfuscate_secret(api_row.api_key_obfuscated) if (api_row and api_row.api_key_obfuscated) else env_api_key
     return {
         "model": model,
         "api_key": api_key,

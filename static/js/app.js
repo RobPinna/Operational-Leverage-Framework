@@ -100,7 +100,7 @@ function initLoadingOverlay() {
     collect: [
       'Discovering relevant pages…',
       'Crawling key pages…',
-      'Rendering dynamic pages (fallback)…',
+      'Rendering dynamic pages (if needed)…',
       'Downloading PDFs…',
       'Scanning PDF contents…',
       'Crawling job postings…',

@@ -27,6 +27,11 @@ exports/**
 build/
 dist/
 dist_release/
+build_temp_*/
+
+# Local smoke logs
+smoke_stdout.txt
+smoke_stderr.txt
 
 # Local scratch artifacts
 py_write_test.txt

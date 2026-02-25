@@ -78,6 +78,7 @@
           <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 whitespace-normal break-words">
             {{ overview.topRiskVerdict.verdict_line | replace('Top Risk: ', '') }}
           </h3>
+          <p class="text-[11px] text-slate-500 mt-2">Risk ID #{{ overview.topRiskVerdict.top_risk_id }}</p>
           <div class="mt-4 flex flex-wrap gap-2 items-center">
             <span class="badge-likelihood metric-label" data-tooltip="Estimated likelihood derived from distinct public signals (defensive-only).">
               <span class="metric-key">Likelihood:</span>
@@ -89,7 +90,7 @@
             </span>
             <span class="badge-confidence metric-label" data-tooltip="{{ es_tip }} Confidence is {{ overview.topRiskVerdict.confidence }}%.">
               <span class="metric-key">Evidence strength:</span>
-              <span class="metric-value {{ es_class }}">{{ es }}</span>
+              <span class="metric-value {{ es_class }}">{{ es }} ({{ overview.topRiskVerdict.confidence }}%)</span>
             </span>
           </div>
       </div>
