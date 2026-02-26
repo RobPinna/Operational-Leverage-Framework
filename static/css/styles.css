@@ -1198,6 +1198,112 @@ i[data-lucide],
   font-weight: 650;
 }
 
+.abuse-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.abuse-step {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 0.78rem;
+  align-items: start;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: abuse-step-reveal 420ms ease forwards;
+}
+
+.abuse-step:nth-child(1) {
+  animation-delay: 40ms;
+}
+
+.abuse-step:nth-child(2) {
+  animation-delay: 110ms;
+}
+
+.abuse-step:nth-child(3) {
+  animation-delay: 180ms;
+}
+
+.abuse-step:nth-child(4) {
+  animation-delay: 250ms;
+}
+
+.abuse-step:nth-child(5) {
+  animation-delay: 320ms;
+}
+
+.abuse-step:nth-child(6) {
+  animation-delay: 390ms;
+}
+
+.abuse-step-rail {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.abuse-step-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 0.44rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(241, 244, 255, 0.92);
+  box-shadow:
+    0 0 0 2px rgba(166, 120, 156, 0.12),
+    0 0 16px rgba(200, 150, 186, 0.2);
+  transition: background-color 140ms ease, box-shadow 180ms ease, transform 140ms ease;
+}
+
+.abuse-step-line {
+  position: absolute;
+  top: 1.06rem;
+  bottom: -0.7rem;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(
+    180deg,
+    rgba(223, 229, 255, 0.62),
+    rgba(177, 190, 230, 0.34) 48%,
+    rgba(128, 139, 173, 0.1)
+  );
+}
+
+.abuse-step-body {
+  padding: 0.08rem 0 0.82rem;
+}
+
+.abuse-step:hover .abuse-step-dot {
+  background: rgba(255, 240, 248, 0.98);
+  box-shadow:
+    0 0 0 2px rgba(188, 126, 166, 0.2),
+    0 0 18px rgba(220, 162, 198, 0.34);
+  transform: scale(1.08);
+}
+
+@keyframes abuse-step-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .abuse-step {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
 .wws-frame {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);

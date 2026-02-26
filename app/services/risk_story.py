@@ -1023,6 +1023,93 @@ def _dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [seen[k] for k in order if k in seen]
 
 
+_FOCUS_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "into",
+    "over",
+    "through",
+    "across",
+    "risk",
+    "step",
+    "path",
+    "phase",
+    "stage",
+    "status",
+    "impact",
+    "evidence",
+    "strength",
+    "score",
+    "high",
+    "med",
+    "low",
+}
+
+
+def _focus_terms(*chunks: str, max_terms: int = 12) -> list[str]:
+    tokens: list[str] = []
+    for chunk in chunks:
+        for t in re.findall(r"[a-z0-9]{4,}", str(chunk or "").lower()):
+            if t in _FOCUS_STOPWORDS:
+                continue
+            tokens.append(t)
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in tokens:
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+        if len(out) >= max_terms:
+            break
+    return out
+
+
+def _focused_evidence_subset(
+    evidence: list[dict[str, Any]],
+    *,
+    seed_texts: list[str],
+    max_items: int = 8,
+) -> list[dict[str, Any]]:
+    rows = [ev for ev in (evidence or []) if isinstance(ev, dict)]
+    if not rows:
+        return []
+    terms = _focus_terms(*seed_texts, max_terms=14)
+    if not terms:
+        return rows[:max_items]
+
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for ev in rows:
+        title = str(ev.get("title", "") or "").lower()
+        snippet = str(ev.get("snippet", "") or "").lower()
+        signal_label = str(ev.get("signal_label", "") or ev.get("signal_type", "") or "").lower()
+        evidence_kind = str(ev.get("evidence_kind", "") or "").lower()
+        haystack = f"{title} {snippet} {signal_label} {evidence_kind}"
+        match_score = 0.0
+        for term in terms:
+            if term in title:
+                match_score += 3.0
+            elif term in snippet:
+                match_score += 2.0
+            elif term in haystack:
+                match_score += 1.0
+        conf = float(ev.get("confidence", 50) or 50)
+        weight = float(ev.get("weight", 1.0) or 1.0)
+        score = match_score + (conf * 0.02) + (weight * 0.35)
+        scored.append((score, ev))
+
+    has_match = any(s > 0.0 for s, _ in scored)
+    if not has_match:
+        return rows[:max_items]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [ev for _, ev in scored[:max_items]]
+
+
 def _priority_score(
     *,
     impact_band: str,
@@ -3213,26 +3300,58 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         }
         for b in (recipe_bundles or [])[:6]
     ]
+    risk_evidence_pool = list(evidence_sets.get(f"risk:{rid}", []) or [])
     story_abuse_path = []
-    for step in (risk.get("timeline") or [])[:6]:
+    for idx, step in enumerate((risk.get("timeline") or [])[:6], start=1):
         if not isinstance(step, dict):
             continue
+        step_title = str(step.get("title", ""))[:90]
+        step_detail = str(step.get("brief", ""))[:180]
+        step_set_id = f"step:{rid}:{idx}"
+        evidence_sets[step_set_id] = _focused_evidence_subset(
+            risk_evidence_pool,
+            seed_texts=[step_title, step_detail, str(primary_risk_type or ""), str(row.risk_type or "")],
+            max_items=8,
+        )
         story_abuse_path.append(
             {
                 "id": f"step:{int(step.get('step_index', 0) or 0)}",
-                "title": str(step.get("title", ""))[:90],
-                "detail": str(step.get("brief", ""))[:180],
+                "title": step_title,
+                "detail": step_detail,
                 "icon": "route",
-                "evidence_set_id": f"risk:{rid}",
+                "evidence_set_id": step_set_id,
             }
         )
+    impact_primary_set_id = f"impact:primary:{rid}"
+    evidence_sets[impact_primary_set_id] = _focused_evidence_subset(
+        risk_evidence_pool,
+        seed_texts=[
+            str(row.impact_rationale or ""),
+            str(row.description or ""),
+            str(primary_risk_type or ""),
+            str(row.risk_type or ""),
+        ],
+        max_items=8,
+    )
+    impact_score_set_id = f"impact:score:{rid}"
+    evidence_sets[impact_score_set_id] = _focused_evidence_subset(
+        risk_evidence_pool,
+        seed_texts=[
+            str(current_status),
+            str(impact_band),
+            str(likelihood),
+            str(evidence_strength),
+            str(primary_risk_type or ""),
+        ],
+        max_items=8,
+    )
     story_impacts = [
         {
             "id": "impact:primary",
             "title": "Business impact",
             "detail": _first_sentence(str(row.impact_rationale or row.description or ""), max_chars=180),
             "icon": "target",
-            "evidence_set_id": f"risk:{rid}",
+            "evidence_set_id": impact_primary_set_id,
         },
         {
             "id": "impact:score",
@@ -3242,7 +3361,7 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
                 f"Evidence strength {str(evidence_strength)} ({int(conf)}%)."
             ),
             "icon": "bar-chart-3",
-            "evidence_set_id": f"risk:{rid}",
+            "evidence_set_id": impact_score_set_id,
         },
     ]
     story_map = {

@@ -4,57 +4,8 @@
 <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">All risks</a>
 {% endblock %}
 
-{% block topbar_left %}
-{% set r = vm.risk %}
-{% set impact_class = 'high' if r.impact_band == 'HIGH' else ('med' if r.impact_band == 'MED' else 'low') %}
-<div class="flex items-center gap-2 flex-wrap">
-  <span class="badge-likelihood metric-label" data-tooltip="Estimated likelihood derived from distinct public signals (defensive-only).">
-    <span class="metric-key">Likelihood:</span>
-    <span class="metric-value {{ r.likelihood }}">{{ r.likelihood | upper }}</span>
-  </span>
-  <span class="badge-severity metric-label">
-    <span class="metric-key">Impact:</span>
-    <span class="metric-value {{ impact_class }}">{{ r.impact_band }}</span>
-  </span>
-  <span class="badge-confidence metric-label" data-tooltip="{{ r.evidence_strength_tooltip }}">
-    <span class="metric-key">Evidence strength:</span>
-    <span class="metric-value {{ 'high' if r.evidence_strength in ['STRONG'] else ('med' if r.evidence_strength in ['OK'] else 'low') }}">{{ r.evidence_strength }}</span>
-  </span>
-  <span class="badge" data-tooltip="Signal coverage: number and diversity of distinct signals supporting this risk.">
-    Signal coverage: {{ r.signal_coverage }}
-  </span>
-  {% for chip in r.campaign_chips %}
-  <span class="badge" data-tooltip="Campaign pattern (heuristic).">{{ chip }}</span>
-  {% endfor %}
-  {% for chip in r.mitre_chips %}
-  <span class="badge" data-tooltip="MITRE mapping (heuristic, non-exhaustive).">{{ chip }}</span>
-  {% endfor %}
-</div>
-{% endblock %}
-
-{% block topbar_right %}
-{% set __risk_set_key = 'risk:' ~ vm.risk.id %}
-{% set __risk_set = vm.evidenceSets.get(__risk_set_key, []) if vm.evidenceSets else [] %}
-{% set __risk_ev = namespace(url='') %}
-{% for ev in __risk_set %}
-  {% if not __risk_ev.url %}
-    {% if ev.doc_id %}
-      {% set __risk_ev.url = '/documents/' ~ ev.doc_id %}
-    {% elif ev.doc_link %}
-      {% set __risk_ev.url = ev.doc_link %}
-    {% elif ev.url %}
-      {% set __risk_ev.url = ev.url %}
-    {% endif %}
-  {% endif %}
-{% endfor %}
-<div class="flex items-center gap-2 flex-wrap justify-end">
-  <a class="btn-ghost text-xs" href="{{ __risk_ev.url if __risk_ev.url else ('/assessments/' ~ assessment.id ~ '/evidence') }}">View evidence</a>
-  <form method="post" action="/assessments/{{ assessment.id }}/export-pdf">
-    <button class="btn-ghost text-xs" type="submit">Export</button>
-  </form>
-  <button type="button" class="btn-ghost text-xs" onclick="window.__copyRiskSummary && window.__copyRiskSummary()">Copy summary</button>
-</div>
-{% endblock %}
+{% block topbar_left %}{% endblock %}
+{% block topbar_right %}{% endblock %}
 
 {% block content %}
 <script>
@@ -85,6 +36,8 @@
 </script>
 
 <div class="page-shell max-w-6xl mt-3" x-data="RiskDetailPage(window.__riskDetailVM)" x-cloak>
+  {% set r = vm.risk %}
+  {% set impact_class = 'high' if r.impact_band == 'HIGH' else ('med' if r.impact_band == 'MED' else 'low') %}
   <div class="space-y-5">
     <section class="panel p-6">
       <div class="mt-3 flex flex-wrap gap-2 items-center">
@@ -99,6 +52,30 @@
       {% set reasoning_compact = false %}
       {% set reasoning_full_text = true %}
       {% include "partials/risk_reasoning_block.html" %}
+    </section>
+
+    <section class="panel p-6">
+      <h3 class="section-title">Risk context</h3>
+      <div class="mt-4 flex flex-wrap gap-2 items-center">
+        <span class="badge-likelihood metric-label" data-tooltip="Estimated likelihood derived from distinct public signals (defensive-only).">
+          <span class="metric-key">Likelihood:</span>
+          <span class="metric-value {{ r.likelihood }}">{{ r.likelihood | upper }}</span>
+        </span>
+        <span class="badge-severity metric-label">
+          <span class="metric-key">Impact:</span>
+          <span class="metric-value {{ impact_class }}">{{ r.impact_band }}</span>
+        </span>
+        <span class="badge-confidence metric-label" data-tooltip="{{ r.evidence_strength_tooltip }}">
+          <span class="metric-key">Evidence strength:</span>
+          <span class="metric-value {{ 'high' if r.evidence_strength in ['STRONG'] else ('med' if r.evidence_strength in ['OK'] else 'low') }}">{{ r.evidence_strength }}</span>
+        </span>
+        <span class="badge" data-tooltip="Signal coverage: number and diversity of distinct signals supporting this risk.">
+          Signal coverage: {{ r.signal_coverage }}
+        </span>
+        {% for chip in r.campaign_chips %}
+        <span class="badge" data-tooltip="Campaign pattern (heuristic).">{{ chip }}</span>
+        {% endfor %}
+      </div>
     </section>
 
     <section class="panel p-6">
@@ -159,16 +136,21 @@
 
         <div>
           <p class="story-col-title">Abuse path</p>
-          <div class="space-y-3">
+          <div class="abuse-timeline">
             {% for c in vm.story_map.abuse_path %}
-            <article class="info-card compact">
-              <p class="item-title flex items-center gap-2">
-                <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                {{ c.title }}
-              </p>
-              <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-              <div class="mt-3 flex gap-2 flex-wrap">
-                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, 'Risk evidence')">Evidence</button>
+            <article class="abuse-step">
+              <div class="abuse-step-rail" aria-hidden="true">
+                <span class="abuse-step-dot"></span>
+                {% if not loop.last %}
+                <span class="abuse-step-line"></span>
+                {% endif %}
+              </div>
+              <div class="abuse-step-body">
+                <p class="item-title">{{ c.title }}</p>
+                <p class="item-description mt-1">{{ c.detail }}</p>
+                <div class="mt-2 flex gap-2 flex-wrap">
+                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
+                </div>
               </div>
             </article>
             {% else %}
@@ -188,7 +170,7 @@
               </p>
               <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
               <div class="mt-3 flex gap-2 flex-wrap">
-                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, 'Risk evidence')">Evidence</button>
+                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
               </div>
             </article>
             {% else %}
@@ -255,7 +237,7 @@
           <h3 class="section-title">Top evidence</h3>
           <p class="section-subtitle">Evidence shown here passed relevance validation for this risk type.</p>
         </div>
-        <button type="button" class="btn-ghost text-xs" @click="openEvidence({{ ('risk:' ~ vm.risk.id) | tojson }}, 'Risk evidence')">Open drawer</button>
+        <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/evidence">Evidence log</a>
       </div>
       <div class="mt-4 space-y-3">
         {% for ev in vm.details.evidence %}
@@ -281,6 +263,29 @@
         {% else %}
         <div class="empty-state">Insufficient evidence.</div>
         {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel p-6">
+      <div class="section-header-row">
+        <div>
+          <h3 class="section-title">MITRE ATT&CK categories</h3>
+          <p class="section-subtitle">Mapped ATT&CK techniques for this risk.</p>
+        </div>
+      </div>
+      <div class="mt-4">
+        {% if r.mitre_chips %}
+        <div class="flex flex-wrap gap-3">
+          {% for code in r.mitre_chips %}
+          <div class="recipe-block">
+            <i data-lucide="crosshair" class="inline-icon"></i>
+            <span>{{ code }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">No MITRE ATT&CK categories mapped.</div>
+        {% endif %}
       </div>
     </section>
   </div>
@@ -319,28 +324,4 @@
     </div>
   </div>
 </div>
-
-<script>
-  window.__openRiskEvidence = function() {
-    try {
-      const rid = (window.__riskDetailVM && window.__riskDetailVM.risk) ? window.__riskDetailVM.risk.id : null;
-      const root = document.querySelector('[x-data]');
-      if (!rid || !root || !root.__x) return;
-      root.__x.$data.openEvidence('risk:' + String(rid), 'Risk evidence');
-    } catch (e) {}
-  };
-  window.__copyRiskSummary = async function() {
-    try {
-      const r = (window.__riskDetailVM && window.__riskDetailVM.risk) ? window.__riskDetailVM.risk : {};
-      const exec = (window.__riskDetailVM && window.__riskDetailVM.details) ? (window.__riskDetailVM.details.exec_brief || '') : '';
-      const lines = [];
-      if (r && r.title) lines.push('Risk: ' + r.title);
-      if (r && r.likelihood) lines.push('Likelihood: ' + String(r.likelihood).toUpperCase());
-      if (r && r.impact_band) lines.push('Impact: ' + String(r.impact_band));
-      if (r && r.evidence_strength) lines.push('Evidence strength: ' + String(r.evidence_strength));
-      if (exec) lines.push('', exec);
-      await navigator.clipboard.writeText(lines.join('\\n'));
-    } catch (e) {}
-  };
-</script>
 {% endblock %}
