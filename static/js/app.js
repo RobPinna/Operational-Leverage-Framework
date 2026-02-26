@@ -197,10 +197,36 @@ function initLoadingOverlay() {
   });
 }
 
+function initServerTimeBadge() {
+  const el = document.getElementById('serverTimeValue');
+  if (!el) return;
+
+  const timeFormat = new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const dateFormat = new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+
+  const tick = () => {
+    const now = new Date();
+    el.textContent = `${dateFormat.format(now)} - ${timeFormat.format(now)}`;
+  };
+
+  tick();
+  window.setInterval(tick, 1000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   if (window.lucide && typeof window.lucide.createIcons === 'function') {
     window.lucide.createIcons();
   }
+  initServerTimeBadge();
   initTooltips();
   initOpenDetailsButtons();
   initLoadingOverlay();

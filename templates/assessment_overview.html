@@ -35,20 +35,11 @@
   <div class="mb-6 flex items-center justify-between gap-3 flex-wrap">
     <div>
       <div class="flex gap-2 flex-wrap">
-        <form method="post" action="/assessments/{{ assessment.id }}/collect" data-loading="collect">
-          <button class="btn-primary text-xs" type="submit">Run collection</button>
-        </form>
-        <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">Risks</a>
         {# Report/export are available from the sidebar; keep the overview risk-first. #}
       </div>
       <p class="mt-2 text-[11px] text-slate-400">
         {{ overview.status_counts.get('ELEVATED', 0) }} elevated · {{ overview.status_counts.get('WATCHLIST', 0) }} watchlist · {{ overview.status_counts.get('BASELINE', 0) }} baseline
       </p>
-    </div>
-    <div class="flex gap-2 flex-wrap">
-      {% if overview.topRiskVerdict %}
-      <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks/{{ overview.topRiskVerdict.top_risk_id }}?tab=workflow">Workflow Lens</a>
-      {% endif %}
     </div>
   </div>
 
@@ -148,7 +139,7 @@
       <div class="divider"></div>
 
       <div x-show="mode === 'top'" x-transition.opacity>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <p class="story-col-title">Signals</p>
             <div class="space-y-3">
@@ -166,27 +157,6 @@
               </article>
               {% else %}
               <div class="empty-state">No signal bundles available.</div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <div>
-            <p class="story-col-title">Workflow</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMap.workflows %}
-              <article class="info-card compact">
-                <p class="item-title flex items-center gap-2">
-                  <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                  {{ c.title }}
-                </p>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
-                  <a class="badge" href="/assessments/{{ assessment.id }}/risks/{{ overview.topRiskVerdict.top_risk_id }}?tab=workflow">Workflow Lens</a>
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No linked workflows.</div>
               {% endfor %}
             </div>
           </div>
@@ -241,7 +211,7 @@
       </div>
 
       <div x-show="mode === 'all'" x-transition.opacity>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <p class="story-col-title">Signals (aggregated)</p>
             <div class="space-y-3">
@@ -259,27 +229,6 @@
               </article>
               {% else %}
               <div class="empty-state">No aggregated signals.</div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <div>
-            <p class="story-col-title">Workflow (high friction)</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMapAll.workflows %}
-              <article class="info-card compact">
-                <p class="item-title flex items-center gap-2">
-                  <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                  {{ c.title }}
-                </p>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
-                  <a class="badge" href="/assessments/{{ assessment.id }}/risks/{{ overview.topRiskVerdict.top_risk_id }}?tab=workflow">Workflow Lens</a>
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No workflow nodes.</div>
               {% endfor %}
             </div>
           </div>
@@ -357,31 +306,6 @@
         </div>
         {% else %}
         <div class="empty-state">No control points available yet.</div>
-        {% endfor %}
-      </div>
-    </article>
-  </section>
-
-  <section class="section-stack">
-    <article class="panel p-6">
-      <div class="section-header-row">
-        <div>
-          <h2 class="section-title">High trust friction nodes</h2>
-          <p class="section-subtitle">Workflow Lens highlights linked to their reinforcing risks.</p>
-        </div>
-        <span class="badge" data-tooltip="Workflow Lens: operational steps where trust is exercised and may enable risks.">Workflow Lens</span>
-      </div>
-      <div class="divider"></div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {% for n in overview.highTrustFrictionNodes %}
-        <a class="info-card compact block" href="{{ n.linked_risk_url }}">
-          <p class="item-title">{{ n.title }}</p>
-          <p class="item-description clamp-2 mt-1">
-            Trust friction: {{ n.trust_friction_score }} - Risk: {{ n.linked_risk_title }}
-          </p>
-        </a>
-        {% else %}
-        <div class="empty-state">No high-friction workflow nodes detected.</div>
         {% endfor %}
       </div>
     </article>
@@ -499,25 +423,6 @@
         </div>
       </details>
 
-      <details class="accordion-item">
-        <summary><i data-lucide="git-branch-plus" class="inline-icon"></i> Linked workflows</summary>
-        <div class="accordion-body">
-          <div class="space-y-3">
-            {% for wf in overview.details.linked_workflows %}
-            <div class="info-card compact">
-              <p class="item-title">{{ wf.title }}</p>
-              <p class="item-description mt-1">Trust friction: {{ wf.trust_friction_score }} | Sensitivity: {{ wf.sensitivity_level }} | Channel: {{ wf.channel_type }}</p>
-              <div class="mt-3 flex gap-2 flex-wrap">
-                <button type="button" class="badge" @click="openEvidence({{ wf.evidence_set_id | tojson }}, {{ wf.title | tojson }})">Evidence</button>
-                <a class="badge" href="/assessments/{{ assessment.id }}/risks/{{ overview.topRiskVerdict.top_risk_id }}?tab=workflow">Workflow Lens</a>
-              </div>
-            </div>
-            {% else %}
-            <div class="empty-state">No linked workflows.</div>
-            {% endfor %}
-          </div>
-        </div>
-      </details>
     </div>
   </section>
 
@@ -568,11 +473,8 @@
   <section class="section-stack">
     <article class="panel p-6">
       <h2 class="section-title">No risks yet</h2>
-      <p class="section-subtitle">Run collection and generate risks to see a decision-ready overview.</p>
+      <p class="section-subtitle">Generate risks to see a decision-ready overview.</p>
       <div class="mt-4 flex gap-2 flex-wrap">
-        <form method="post" action="/assessments/{{ assessment.id }}/collect" data-loading="collect">
-          <button class="btn-primary text-xs" type="submit">Run collection</button>
-        </form>
         <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">Open risks</a>
       </div>
     </article>

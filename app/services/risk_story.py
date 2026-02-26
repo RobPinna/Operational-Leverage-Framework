@@ -2644,7 +2644,7 @@ def build_overview_viewmodel(
                 "channel_type": str(n.channel_type or ""),
                 "linked_risk_id": int(best_rid),
                 "linked_risk_title": str(risk_titles_by_id.get(int(best_rid), f"Risk {best_rid}")),
-                "linked_risk_url": f"/assessments/{assessment_id}/risks/{int(best_rid)}?tab=workflow",
+                "linked_risk_url": f"/assessments/{assessment_id}/risks/{int(best_rid)}",
             }
         )
         if len(high_friction_nodes) >= 6:

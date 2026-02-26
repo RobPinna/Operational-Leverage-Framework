@@ -194,7 +194,7 @@ def build_evidence_log_viewmodel(
                     f"/assessments/{assessment_id}/risks/{int(best_risk)}#evidence" if best_risk is not None else ""
                 ),
                 "open_risk_workflow_url": (
-                    f"/assessments/{assessment_id}/risks/{int(best_risk)}?tab=workflow" if best_risk is not None else ""
+                    f"/assessments/{assessment_id}/risks/{int(best_risk)}#evidence" if best_risk is not None else ""
                 ),
             }
         )

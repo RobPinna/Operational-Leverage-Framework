@@ -38,8 +38,8 @@ def trust_workflow_page(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    # Deprecated as a standalone entry point: workflow is a lens under Risks.
-    return RedirectResponse(url=f"/assessments/{assessment_id}/risks?view=workflow", status_code=302)
+    # Deprecated entry point.
+    return RedirectResponse(url=f"/assessments/{assessment_id}/risks", status_code=302)
 
 
 @router.post("/assessments/{assessment_id}/trust-workflows/generate")
@@ -66,4 +66,4 @@ def trust_workflow_generate(
     except Exception as exc:
         fail_progress(assessment_id, "assess", f"{exc.__class__.__name__}: {exc}")
         raise
-    return RedirectResponse(url=f"/assessments/{assessment_id}/risks?view=workflow", status_code=302)
+    return RedirectResponse(url=f"/assessments/{assessment_id}/risks", status_code=302)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.dependencies import get_current_user
 from app.models import Assessment
-from app.services.risk_story import build_overview_viewmodel, build_risk_detail_viewmodel, get_risks_by_status
+from app.services.risk_story import build_risk_detail_viewmodel, get_risks_by_status
 
 router = APIRouter(tags=["risks"])
 
@@ -42,7 +42,6 @@ def list_risks(
     risk_type: str = Query(default=""),
     impact: str = Query(default=""),
     q: str = Query(default=""),
-    view: str = Query(default=""),
     include_baseline: bool = Query(default=False),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
@@ -100,21 +99,6 @@ def list_risks(
             }
         )
 
-    high_friction = []
-    view_key = (view or "").strip().lower()
-    if view_key == "workflow":
-        try:
-            ov = build_overview_viewmodel(
-                db,
-                assessment,
-                include_weak=True,
-                include_baseline=bool(include_baseline),
-                generate_brief=False,
-            )
-            high_friction = list(ov.get("highTrustFrictionNodes") or [])
-        except Exception:
-            high_friction = []
-
     return request.app.state.templates.TemplateResponse(
         "risks.html",
         {
@@ -131,9 +115,7 @@ def list_risks(
             "q": q,
             "status_tab": status_tab,
             "status_counts": status_counts,
-            "view": view_key,
             "include_baseline": bool(include_baseline),
-            "high_friction": high_friction,
         },
     )
 
@@ -156,7 +138,7 @@ def risk_detail(
         return RedirectResponse(url=f"/assessments/{assessment_id}/risks", status_code=302)
 
     tab_key = (tab or "brief").strip().lower()
-    if tab_key not in {"brief", "workflow"}:
+    if tab_key not in {"brief"}:
         tab_key = "brief"
 
     return request.app.state.templates.TemplateResponse(

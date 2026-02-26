@@ -3,7 +3,6 @@
 {% block topbar_right %}
 <form method="get" action="/assessments/{{ assessment.id }}/risks" class="flex items-center gap-2 flex-wrap justify-end">
   <input type="hidden" name="status" value="{{ status_tab }}" />
-  {% if view %}<input type="hidden" name="view" value="{{ view }}" />{% endif %}
   <input class="input-dark w-56 text-xs" name="q" value="{{ q }}" placeholder="Search risks..." />
   <select class="select-dark w-44 text-xs" name="risk_type" aria-label="Type">
     <option value="">All types</option>
@@ -37,27 +36,6 @@
       </a>
     </div>
   </section>
-
-  {% if view == 'workflow' and high_friction %}
-  <section class="panel p-4 mb-5">
-    <div class="flex items-center justify-between gap-3 flex-wrap">
-      <div>
-        <h3 class="section-title">Workflow Lens</h3>
-        <p class="section-subtitle">High trust-friction nodes and the risks they reinforce.</p>
-      </div>
-    </div>
-    <div class="mt-4 grid md:grid-cols-2 gap-3">
-      {% for n in high_friction %}
-      <a class="info-card compact block" href="{{ n.linked_risk_url }}">
-        <p class="item-title">{{ n.title }}</p>
-        <p class="item-description clamp-2 mt-1">
-          Trust friction: {{ n.trust_friction_score }} - Linked risk: {{ n.linked_risk_title }}
-        </p>
-      </a>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
 
   <section class="section-stack">
     {% if not cards %}
