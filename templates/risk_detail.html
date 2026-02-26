@@ -8,7 +8,7 @@
     <span class="metric-key">Likelihood:</span>
     <span class="metric-value {{ r.likelihood }}">{{ r.likelihood | upper }}</span>
   </span>
-  <span class="badge-severity metric-label" data-tooltip="Impact is a conservative estimate of business impact if the risk materializes.">
+  <span class="badge-severity metric-label">
     <span class="metric-key">Impact:</span>
     <span class="metric-value {{ impact_class }}">{{ r.impact_band }}</span>
   </span>
@@ -132,6 +132,77 @@
         <span class="recipe-arrow">-&gt;</span>
         <div class="recipe-outcome">
           <span class="recipe-title">{{ vm.risk.primary_risk_type if vm.risk.primary_risk_type else vm.risk.title }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel p-6">
+      <div class="section-header-row">
+        <div>
+          <h3 class="section-title">Risk story map</h3>
+          <p class="section-subtitle">Per-risk chain from signals to impact.</p>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <p class="story-col-title">Signals</p>
+          <div class="space-y-3">
+            {% for c in vm.story_map.signals %}
+            <article class="info-card compact">
+              <p class="item-title flex items-center gap-2">
+                <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
+                {{ c.title }}
+              </p>
+              <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
+              <div class="mt-3 flex gap-2 flex-wrap">
+                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
+              </div>
+            </article>
+            {% else %}
+            <div class="empty-state">No signal bundles available.</div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <p class="story-col-title">Abuse path</p>
+          <div class="space-y-3">
+            {% for c in vm.story_map.abuse_path %}
+            <article class="info-card compact">
+              <p class="item-title flex items-center gap-2">
+                <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
+                {{ c.title }}
+              </p>
+              <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
+              <div class="mt-3 flex gap-2 flex-wrap">
+                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, 'Risk evidence')">Evidence</button>
+              </div>
+            </article>
+            {% else %}
+            <div class="empty-state">No timeline steps available.</div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <p class="story-col-title">Impact</p>
+          <div class="space-y-3">
+            {% for c in vm.story_map.impacts %}
+            <article class="info-card compact">
+              <p class="item-title flex items-center gap-2">
+                <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
+                {{ c.title }}
+              </p>
+              <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
+              <div class="mt-3 flex gap-2 flex-wrap">
+                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, 'Risk evidence')">Evidence</button>
+              </div>
+            </article>
+            {% else %}
+            <div class="empty-state">No impact notes.</div>
+            {% endfor %}
+          </div>
         </div>
       </div>
     </section>

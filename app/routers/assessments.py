@@ -672,7 +672,8 @@ def assessment_overview(
             "active": "assessment_overview",
             "assessment": assessment,
             "assessment_context": _assessment_context(assessment),
-            "section_title": "Overview",
+            "section_title": "Assessment snapshot",
+            "hide_section_title": True,
             "overview": overview,
         },
     )

@@ -31,6 +31,7 @@
 {% if 'Key conditions:' in _wws_summary %}
   {% set _wws_key_conditions = _wws_summary.split('Key conditions:', 1)[1] | trim %}
 {% endif %}
+{% set _why_matters = (reasoning.why_it_matters or '') | replace('Impact is a conservative estimate based on exposed channels and workflow sensitivity cues.', '') | replace('Impact is a conservative estimate of business impact if the risk materializes.', '') | trim %}
 <div class="mt-3 grid grid-cols-1 {% if not _compact %}sm:grid-cols-2{% endif %} gap-2">
   <article class="info-card compact">
     <p class="kpi-label">What we saw</p>
@@ -42,9 +43,14 @@
       <div class="wws-line">&nbsp;</div>
       <div class="wws-line"><span class="wws-label">signal types</span> <span class="wws-brace">{</span></div>
       <div class="wws-line">
-        <span class="wws-indent-1"></span><span class="wws-types">{{ _wws_signal_types_text if _wws_signal_types_text else _wws_summary }}</span>{% if _wws_key_conditions %} <span class="wws-note">Key conditions:</span> <span class="wws-conditions">{{ _wws_key_conditions }}</span>{% endif %}
+        <span class="wws-indent-1"></span><span class="wws-types">{{ _wws_signal_types_text if _wws_signal_types_text else _wws_summary }}</span>
       </div>
+      {% if _wws_key_conditions %}
+      <div class="wws-line"><span class="wws-indent-1"></span><span class="wws-note">Key conditions:</span></div>
+      <div class="wws-line"><span class="wws-indent-2"></span><span class="wws-conditions">{{ _wws_key_conditions }}</span></div>
+      {% endif %}
       <div class="wws-line"><span class="wws-brace">}</span></div>
+      <div class="wws-line">&nbsp;</div>
       <div class="wws-line"><span class="wws-label">signals</span><span class="wws-op">:</span> <span class="wws-brace">[</span></div>
       {% set _wws_ns = namespace(has_signal=false) %}
       {% for _sig in _wws_signals.split('|') %}
@@ -62,7 +68,7 @@
   </article>
   <article class="info-card compact">
     <p class="kpi-label">Why it matters</p>
-    <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words">{{ reasoning.why_it_matters }}</p>
+    <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words">{{ _why_matters }}</p>
   </article>
 </div>
 {% endif %}

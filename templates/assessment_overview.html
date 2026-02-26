@@ -1,519 +1,161 @@
 {% extends "base.html" %}
 
 {% block content %}
-<script>
-  window.__riskStoryVM = {{ overview | tojson }};
-  window.RiskStoryPage = function(vm) {
-    const data = vm || {};
-    return {
-      mode: 'top',
-      vm: data,
-      drawer: { open: false, title: '', subtitle: '', items: [] },
-      setMode: function(next) {
-        this.mode = String(next || '') === 'all' ? 'all' : 'top';
-      },
-      openEvidence: function(setId, title) {
-        const id = String(setId || '');
-        const sets = (this.vm && this.vm.evidenceSets) ? this.vm.evidenceSets : {};
-        const items = Array.isArray(sets[id]) ? sets[id] : [];
-        this.drawer.open = true;
-        this.drawer.title = String(title || 'Evidence');
-        this.drawer.subtitle = items.length ? (items.length + ' evidence item(s) (deduped)') : 'No evidence items available.';
-        this.drawer.items = items;
-      },
-      closeEvidence: function() {
-        this.drawer.open = false;
-        this.drawer.title = '';
-        this.drawer.subtitle = '';
-        this.drawer.items = [];
-      },
-    };
-  };
-</script>
+{% set metrics = overview.overview_metrics if overview.overview_metrics is defined else {} %}
+{% set ordered = overview.ordered_risks if overview.ordered_risks is defined else [] %}
+{% set mitre_codes = overview.mitre_codes if overview.mitre_codes is defined else [] %}
+{% set top = overview.topRiskVerdict %}
+{% set delta = metrics.delta_vs_previous if metrics and metrics.delta_vs_previous is defined else None %}
 
-<div class="page-shell max-w-6xl" x-data="RiskStoryPage(window.__riskStoryVM)" x-cloak>
-  <div class="mb-6 flex items-center justify-between gap-3 flex-wrap">
+<div class="page-shell max-w-6xl">
+  <section class="section-stack">
     <div>
-      <div class="flex gap-2 flex-wrap">
-        {# Report/export are available from the sidebar; keep the overview risk-first. #}
-      </div>
-      <p class="mt-2 text-[11px] text-slate-400">
-        {{ overview.status_counts.get('ELEVATED', 0) }} elevated · {{ overview.status_counts.get('WATCHLIST', 0) }} watchlist · {{ overview.status_counts.get('BASELINE', 0) }} baseline
-      </p>
+      <h2 class="section-title">Assessment snapshot</h2>
+      <p class="section-subtitle">Concise risk posture summary for this assessment run.</p>
     </div>
-  </div>
-
-  {% if overview.topRiskVerdict %}
-  {% set impact_class = 'high' if overview.topRiskVerdict.impact_band == 'HIGH' else ('med' if overview.topRiskVerdict.impact_band == 'MED' else 'low') %}
-  {% set es = overview.topRiskVerdict.evidence_strength %}
-  {% set es_class = 'high' if es == 'STRONG' else ('med' if es == 'OK' else 'low') %}
-  {% set es_tip = 'Strong evidence strength: multiple distinct signal types converge across distinct URLs.' if es == 'STRONG' else ('OK evidence strength: at least two distinct signal types support the risk.' if es == 'OK' else 'Weak evidence strength: evidence is narrow (repetition) or lacks critical process/vendor/org cues.') %}
-  {% set impact_tip = 'High impact: likely material effect on finance, operations, or client trust if exploited.' if overview.topRiskVerdict.impact_band == 'HIGH' else ('Low impact: limited business effect, mostly informational unless combined with other signals.' if overview.topRiskVerdict.impact_band == 'LOW' else 'Medium impact: plausible disruption or trust loss, but typically requires additional conditions.') %}
-
-  <section class="section-stack">
-    <article class="panel p-6">
-      <div class="section-header-row">
-        <div>
-          <h2 class="section-title">Top risk</h2>
-        </div>
-        <div class="flex items-center gap-2 flex-wrap ml-auto">
-          <span class="badge" data-tooltip="Distinct signal types supporting the risk. Repetition alone does not count.">
-            {{ overview.topRiskVerdict.convergence_count }} signals converged
-          </span>
-          <a class="btn-primary text-xs" href="{{ overview.topRiskVerdict.scenario_url }}">Open risk</a>
-        </div>
+    <div class="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="info-card compact">
+        <p class="kpi-label">Detected risks</p>
+        <p class="kpi-value">{{ metrics.detected_risks if metrics else 0 }}</p>
+        <p class="item-description mt-2">
+          Elevated {{ overview.status_counts.get('ELEVATED', 0) }} | Watchlist {{ overview.status_counts.get('WATCHLIST', 0) }} | Baseline {{ overview.status_counts.get('BASELINE', 0) }}
+        </p>
       </div>
-      <div class="divider"></div>
-
-      <div class="max-w-4xl">
-          <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 whitespace-normal break-words">
-            {{ overview.topRiskVerdict.verdict_line | replace('Top Risk: ', '') }}
-          </h3>
-          <p class="text-[11px] text-slate-500 mt-2">Risk ID #{{ overview.topRiskVerdict.top_risk_id }}</p>
-          <div class="mt-4 flex flex-wrap gap-2 items-center">
-            <span class="badge-likelihood metric-label" data-tooltip="Estimated likelihood derived from distinct public signals (defensive-only).">
-              <span class="metric-key">Likelihood:</span>
-              <span class="metric-value {{ overview.topRiskVerdict.likelihood }}">{{ overview.topRiskVerdict.likelihood | upper }}</span>
-            </span>
-            <span class="badge-severity metric-label" data-tooltip="{{ impact_tip }}">
-              <span class="metric-key">Impact:</span>
-              <span class="metric-value {{ impact_class }}">{{ overview.topRiskVerdict.impact_band }}</span>
-            </span>
-            <span class="badge-confidence metric-label" data-tooltip="{{ es_tip }} Confidence is {{ overview.topRiskVerdict.confidence }}%.">
-              <span class="metric-key">Evidence strength:</span>
-              <span class="metric-value {{ es_class }}">{{ es }} ({{ overview.topRiskVerdict.confidence }}%)</span>
-            </span>
-          </div>
-          {% set reasoning = overview.topRiskVerdict.reasoning %}
-          {% set reasoning_compact = false %}
-          {% include "partials/risk_reasoning_block.html" %}
+      <div class="info-card compact">
+        <p class="kpi-label">Overall score</p>
+        <p class="kpi-value">{{ metrics.overall_score if metrics else 0 }}</p>
+        <p class="item-description mt-2">Scale 0-100. Higher value means higher aggregate exposure.</p>
       </div>
-    </article>
-  </section>
-
-  <section class="section-stack">
-    <article class="panel p-5">
-      <div class="section-header-row">
-        <div>
-          <h2 class="section-title">Risk recipe</h2>
-        </div>
-        <span class="badge" data-tooltip="Click an ingredient to see the supporting evidence set (deduped).">A + B + C -&gt; Risk</span>
-      </div>
-      <div class="divider"></div>
-      <div class="flex flex-wrap items-center gap-3">
-        {% for b in overview.recipe_bundles %}
-        {% set recipe_label = b.short_label if b.short_label else b.title %}
-        <button type="button" class="recipe-block" data-tooltip="{{ b.tooltip }}" @click="openEvidence({{ ('bundle:' ~ b.id) | tojson }}, {{ recipe_label | tojson }})">
-          <i data-lucide="{{ b.icon }}" class="inline-icon"></i>
-          <span>{{ recipe_label }}</span>
-          {% if overview.debug_bundle_names %}
-          <span class="block text-[10px] leading-tight text-slate-400 mt-1">{{ b.internal_name if b.internal_name else b.bundle_type }}</span>
-          {% endif %}
-          <span class="signal-count">{{ b.item_count }}</span>
-        </button>
-        {% if not loop.last %}
-        <span class="text-slate-400 font-extrabold">+</span>
-        {% endif %}
-        {% endfor %}
-        <span class="text-slate-400 font-extrabold">-&gt;</span>
-        <a class="recipe-outcome" href="{{ overview.topRiskVerdict.scenario_url }}" data-tooltip="Open the full risk for details, assumptions, and defensive actions.">
-          <i data-lucide="shield-alert" class="inline-icon"></i>
-          <span>{{ overview.topRiskVerdict.primary_risk_type }}</span>
-        </a>
-      </div>
-    </article>
-  </section>
-
-  <section class="section-stack">
-    <article class="panel p-6">
-      <div class="section-header-row">
-        <div>
-          <h2 class="section-title">Risk story map</h2>
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <button type="button" class="tab-pill" :class="mode === 'top' ? 'active' : ''" @click="setMode('top')">Top risk</button>
-          <button type="button" class="tab-pill" :class="mode === 'all' ? 'active' : ''" @click="setMode('all')">All elevated</button>
-          <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">Open risks</a>
-        </div>
-      </div>
-      <div class="divider"></div>
-
-      <div x-show="mode === 'top'" x-transition.opacity>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div>
-            <p class="story-col-title">Signals</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMap.signals %}
-              <article class="info-card compact">
-                <p class="item-title flex items-center gap-2">
-                  <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                  {{ c.title }}
-                </p>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
-                  {# Evidence Log is available from the sidebar; keep the story map risk-first. #}
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No signal bundles available.</div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <div>
-            <p class="story-col-title">Abuse path</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMap.scenario_steps %}
-              <article class="info-card compact" {% if c.tooltip %}data-tooltip="{{ c.tooltip }}"{% endif %}>
-                <div class="flex items-start justify-between gap-2">
-                  <p class="item-title flex items-center gap-2">
-                    <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                    {{ c.title }}
-                    {% if c.control_point %}
-                    <span class="badge" data-tooltip="Control point: defenses should interrupt here.">Control</span>
-                    {% endif %}
-                  </p>
-                </div>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, 'Top risk evidence')">Evidence</button>
-                  <a class="badge" href="{{ overview.topRiskVerdict.scenario_url }}">Risk</a>
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No timeline steps available.</div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <div>
-            <p class="story-col-title">Impact</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMap.impacts %}
-              <article class="info-card compact">
-                <p class="item-title flex items-center gap-2">
-                  <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                  {{ c.title }}
-                </p>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, 'Top risk evidence')">Evidence</button>
-                  <a class="badge" href="{{ overview.topRiskVerdict.scenario_url }}">Risk</a>
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No impact notes.</div>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div x-show="mode === 'all'" x-transition.opacity>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div>
-            <p class="story-col-title">Signals (aggregated)</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMapAll.signals %}
-              <article class="info-card compact">
-                <p class="item-title flex items-center gap-2">
-                  <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                  {{ c.title }}
-                </p>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
-                  {# Evidence Log is available from the sidebar; keep the story map risk-first. #}
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No aggregated signals.</div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <div>
-            <p class="story-col-title">Elevated risks</p>
-            <div class="space-y-3">
-              {% for c in overview.storyMapAll.scenario_cards %}
-              {% set ic = 'high' if c.impact_band == 'HIGH' else ('med' if c.impact_band == 'MED' else 'low') %}
-              <article class="info-card compact">
-                <p class="item-title flex items-center gap-2">
-                  <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
-                  {{ c.title }}
-                </p>
-                <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-                {% set reasoning = c.reasoning %}
-                {% set reasoning_compact = true %}
-                {% include "partials/risk_reasoning_block.html" %}
-                <div class="mt-3 flex gap-2 flex-wrap">
-                  <span class="badge-severity metric-label">
-                    <span class="metric-key">Impact:</span>
-                    <span class="metric-value {{ ic }}">{{ c.impact_band }}</span>
-                  </span>
-                  <span class="badge-likelihood metric-label">
-                    <span class="metric-key">Likelihood:</span>
-                    <span class="metric-value {{ c.likelihood }}">{{ c.likelihood | upper }}</span>
-                  </span>
-                  <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
-                  <a class="badge" href="{{ c.scenario_url }}">Open</a>
-                </div>
-              </article>
-              {% else %}
-              <div class="empty-state">No elevated risks.</div>
-              {% endfor %}
-            </div>
-          </div>
-
-          <div>
-            <p class="story-col-title">Next</p>
-            <div class="info-card compact">
-              <p class="item-title">Board-friendly output</p>
-              <p class="item-description mt-1">
-                Use the Report page for a PDF and annex. This overview stays evidence-first and expandable for analysts.
-              </p>
-              <div class="mt-3 flex gap-2 flex-wrap">
-                <a class="badge" href="{{ overview.topRiskVerdict.scenario_url }}">Open risk</a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </article>
-  </section>
-
-  <section class="section-stack">
-    <article class="panel p-6">
-      <div class="section-header-row">
-        <div>
-          <h2 class="section-title">Control points</h2>
-        </div>
-        <span class="badge" data-tooltip="Controls are defensive-only recommendations (no offensive guidance).">Defensive controls</span>
-      </div>
-      <div class="divider"></div>
-      <div class="space-y-3">
-        {% for cp in overview.controlPoints %}
-        <div class="info-card compact flex items-start justify-between gap-3 flex-wrap">
-          <div class="flex items-start gap-3">
-            <i data-lucide="check-circle" class="inline-icon"></i>
-            <p class="item-description">{{ cp.title }}</p>
-          </div>
-          <div class="flex gap-2 flex-wrap">
-            <span class="badge" data-tooltip="Implementation effort estimate.">Effort: {{ cp.effort }}</span>
-            <span class="badge" data-tooltip="{{ cp.tooltip_reason }}">Reduction: {{ cp.expected_reduction }}</span>
-          </div>
-        </div>
+      <div class="info-card compact">
+        <p class="kpi-label">Delta vs previous</p>
+        {% if delta is not none %}
+        {% set delta_sign = '+' if delta > 0 else '' %}
+        {% if delta > 0 %}
+        {% set delta_class = 'delta-positive' %}
+        {% elif delta < 0 %}
+        {% set delta_class = 'delta-negative' %}
         {% else %}
-        <div class="empty-state">No control points available yet.</div>
-        {% endfor %}
+        {% set delta_class = 'delta-neutral' %}
+        {% endif %}
+        <p class="kpi-value {{ delta_class }}">{{ delta_sign }}{{ delta }}</p>
+        <p class="item-description mt-2">
+          Previous: {{ metrics.previous_score }}
+          {% if metrics.previous_assessment_id %}
+          (assessment #{{ metrics.previous_assessment_id }})
+          {% endif %}
+        </p>
+        {% else %}
+        <p class="kpi-value">N/A</p>
+        <p class="item-description mt-2">No previous comparable assessment found.</p>
+        {% endif %}
       </div>
-    </article>
-  </section>
-
-  <section class="section-stack">
-    <div class="space-y-3">
-      <details class="accordion-item" open>
-        <summary><i data-lucide="file-text" class="inline-icon"></i> Executive brief</summary>
-        <div class="accordion-body">
-          <p class="item-description max-w-prose whitespace-pre-wrap">{{ overview.details.exec_brief }}</p>
-          {% set __ov_set_key = 'risk:' ~ overview.topRiskVerdict.top_risk_id %}
-          {% set __ov_set = overview.evidenceSets.get(__ov_set_key, []) if overview.evidenceSets else [] %}
-          {% set __ov_ev = namespace(url='') %}
-          {% for ev in __ov_set %}
-            {% if not __ov_ev.url %}
-              {% if ev.doc_id %}
-                {% set __ov_ev.url = '/documents/' ~ ev.doc_id %}
-              {% elif ev.doc_link %}
-                {% set __ov_ev.url = ev.doc_link %}
-              {% elif ev.url %}
-                {% set __ov_ev.url = ev.url %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          <div class="mt-4 flex gap-2 flex-wrap">
-            <a class="btn-primary text-xs" href="{{ overview.topRiskVerdict.scenario_url }}">Open risk</a>
-            <a class="btn-ghost text-xs" href="{{ __ov_ev.url if __ov_ev.url else ('/assessments/' ~ assessment.id ~ '/evidence') }}">View evidence</a>
-          </div>
-        </div>
-      </details>
-
-      <details class="accordion-item">
-        <summary><i data-lucide="check-circle" class="inline-icon"></i> Confirm / deny</summary>
-        <div class="accordion-body">
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="info-card compact">
-              <p class="kpi-label flex items-center gap-2">
-                <i data-lucide="check" class="inline-icon"></i>
-                What would confirm
-              </p>
-              <ul class="list-disc pl-5 text-sm text-slate-700 space-y-1 mt-2">
-                {% for row in overview.details.confirm_points %}
-                <li>{{ row }}</li>
-                {% else %}
-                <li class="text-slate-500">No confirm checks suggested.</li>
-                {% endfor %}
-              </ul>
-            </div>
-            <div class="info-card compact">
-              <p class="kpi-label flex items-center gap-2">
-                <i data-lucide="x" class="inline-icon"></i>
-                What would deny
-              </p>
-              <ul class="list-disc pl-5 text-sm text-slate-700 space-y-1 mt-2">
-                {% for row in overview.details.deny_points %}
-                <li>{{ row }}</li>
-                {% else %}
-                <li class="text-slate-500">No deny checks suggested.</li>
-                {% endfor %}
-              </ul>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <details class="accordion-item">
-        <summary><i data-lucide="route" class="inline-icon"></i> Timeline (high-level)</summary>
-        <div class="accordion-body">
-          <div class="timeline-grid">
-            {% for step in overview.details.timeline %}
-            <div class="timeline-step" {% if step.tooltip %}data-tooltip="{{ step.tooltip }}"{% endif %}>
-              <div class="timeline-bubble">
-                <i data-lucide="circle" class="inline-icon"></i>
-              </div>
-              <div>
-                <p class="text-sm font-semibold text-slate-900">{{ step.title }}</p>
-                <p class="text-sm text-slate-600 mt-1 clamp-2">{{ step.detail }}</p>
-              </div>
-            </div>
-            {% else %}
-            <div class="empty-state">No timeline steps available.</div>
-            {% endfor %}
-          </div>
-        </div>
-      </details>
-
-      <details class="accordion-item">
-        <summary><i data-lucide="link" class="inline-icon"></i> Evidence (top)</summary>
-        <div class="accordion-body">
-          <p class="text-sm text-slate-500">
-            Evidence shown here is deduped and excludes boilerplate artifacts.
-          </p>
-          <div class="mt-4 space-y-3">
-            {% for ev in overview.details.evidence %}
-            <article class="citation-card">
-              <p class="citation-title">{{ ev.doc_title if ev.doc_title else (ev.title if ev.title else ev.domain) }}</p>
-              <div class="citation-meta">
-                <span class="citation-pill">{{ ev.signal_label }}</span>
-                <span class="citation-pill">Confidence: {{ ev.confidence }}%</span>
-                {% if ev.occurrences and ev.occurrences > 1 %}
-                <span class="citation-pill">×{{ ev.occurrences }}</span>
-                {% endif %}
-              </div>
-              <p class="citation-snippet">{{ ev.snippet }}</p>
-              <div class="citation-source">
-                <a class="citation-url" href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.url }}</a>
-                <a class="link-inline" href="{{ ev.doc_link }}">{{ "Open document" if ev.doc_link.startswith("/documents/") else "Open" }}</a>
-              </div>
-            </article>
-            {% else %}
-            <div class="empty-state">No evidence items available.</div>
-            {% endfor %}
-          </div>
-        </div>
-      </details>
-
     </div>
   </section>
 
-  {% else %}
-  {% set watch_preview = overview.watchlist_preview if overview.watchlist_preview is defined else overview.watchlistPreview %}
-  {% set watch_total = (overview.watchlist_total_count if overview.watchlist_total_count is defined else overview.status_counts.get('WATCHLIST', 0)) %}
-  {% set watch_limit = (overview.watchlist_preview_limit if overview.watchlist_preview_limit is defined else 3) %}
-  {% if watch_preview and (watch_preview | length) > 0 %}
   <section class="section-stack">
     <article class="panel p-6">
       <div class="section-header-row">
         <div>
-          <h2 class="section-title">Watchlist</h2>
-          <p class="section-subtitle">No elevated risks found.</p>
+          <h2 class="section-title">Ordered risks</h2>
+          <p class="section-subtitle">Sorted by current risk relevance. Top risk is highlighted.</p>
         </div>
-        {% if watch_total > (watch_preview | length) and watch_total > watch_limit %}
-        <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks?tab=watchlist">View all ({{ watch_total }})</a>
-        {% endif %}
+        <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">Open full risks page</a>
       </div>
       <div class="divider"></div>
-      <div class="mt-4 space-y-3">
-        {% for w in watch_preview %}
-        <div class="info-card compact">
-          <p class="item-title">{{ w.title }}</p>
-          <p class="item-description mt-1">
-            {% if (w.plausibility_score or 0) < 55 %}
-            Low plausibility / Needs validation
-            {% else %}
-            Needs validation
-            {% endif %}
-          </p>
-          {% set reasoning = w.reasoning %}
-          {% set reasoning_compact = true %}
-          {% include "partials/risk_reasoning_block.html" %}
-          <div class="mt-2 flex flex-wrap gap-2 items-center">
-            <span class="badge">Needs review</span>
-            {% for m in w.missing_gate_reasons %}
-            <span class="badge">{{ m }}</span>
-            {% endfor %}
-            <a class="btn-ghost text-xs" href="{{ w.scenario_url }}">Open</a>
+
+      {% if ordered %}
+      {% set top_item = ordered[0] %}
+      <article class="info-card p-5 border border-violet-400/35">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <p class="badge">Top risk</p>
+            <h3 class="text-lg font-semibold text-white mt-2">#{{ top_item.rank }} {{ top_item.title }}</h3>
           </div>
+          <a class="btn-primary text-xs" href="{{ top_item.scenario_url }}">Open risk</a>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2 items-center">
+          <span class="badge">Status: {{ top_item.status }}</span>
+          <span class="badge">Likelihood: {{ top_item.likelihood | upper }}</span>
+          <span class="badge">Impact: {{ top_item.impact_band }}</span>
+          <span class="badge">Evidence: {{ top_item.evidence_strength }} ({{ top_item.confidence }}%)</span>
+          <span class="badge">Score: {{ top_item.posture_score }}</span>
+        </div>
+
+        {% if top and top.top_risk_id == top_item.id %}
+        {% set reasoning = top.reasoning %}
+        {% set reasoning_compact = true %}
+        {% include "partials/risk_reasoning_block.html" %}
+        {% endif %}
+      </article>
+
+      {% if (ordered | length) > 1 %}
+      <div class="mt-4 space-y-3">
+        {% for r in ordered[1:] %}
+        <article class="info-card compact">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="min-w-0">
+              <p class="item-title">#{{ r.rank }} {{ r.title }}</p>
+              <p class="item-description mt-1 clamp-2">{{ r.summary if r.summary else "No concise summary available." }}</p>
+              <div class="mt-2 flex gap-2 flex-wrap">
+                <span class="badge">{{ r.status }}</span>
+                <span class="badge">{{ r.likelihood | upper }}</span>
+                <span class="badge">{{ r.impact_band }}</span>
+                <span class="badge">{{ r.evidence_strength }} {{ r.confidence }}%</span>
+                <span class="badge">Score {{ r.posture_score }}</span>
+              </div>
+            </div>
+            <a class="btn-ghost text-xs" href="{{ r.scenario_url }}">Open</a>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="empty-state">No risks detected yet for this assessment.</div>
+      {% endif %}
+    </article>
+  </section>
+
+  <section class="section-stack">
+    <article class="panel p-6">
+      <div class="section-header-row">
+        <div>
+          <h2 class="section-title">MITRE ATT&CK coverage</h2>
+          <p class="section-subtitle">Aggregated ATT&CK techniques inferred from current risk set.</p>
+        </div>
+      </div>
+      <div class="divider"></div>
+      {% if mitre_codes %}
+      <div class="flex flex-wrap gap-3">
+        {% for code in mitre_codes %}
+        <div class="recipe-block">
+          <i data-lucide="crosshair" class="inline-icon"></i>
+          <span>{{ code }}</span>
         </div>
         {% endfor %}
       </div>
+      {% else %}
+      <div class="empty-state">No MITRE ATT&CK codes mapped yet.</div>
+      {% endif %}
     </article>
   </section>
-  {% else %}
+
   <section class="section-stack">
     <article class="panel p-6">
-      <h2 class="section-title">No risks yet</h2>
-      <p class="section-subtitle">Generate risks to see a decision-ready overview.</p>
-      <div class="mt-4 flex gap-2 flex-wrap">
-        <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">Open risks</a>
+      <div class="section-header-row">
+        <div>
+          <h2 class="section-title">CTI report export</h2>
+          <p class="section-subtitle">Download the consolidated PDF report for stakeholders.</p>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="flex gap-2 flex-wrap">
+        <form method="post" action="/assessments/{{ assessment.id }}/export-pdf">
+          <button class="btn-primary text-xs" type="submit">Download CTI PDF report</button>
+        </form>
+        <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/report">Open report history</a>
       </div>
     </article>
   </section>
-  {% endif %}
-  {% endif %}
-
-  <div x-show="drawer.open" class="modal-overlay" x-transition.opacity @keydown.escape.window="closeEvidence()">
-    <div class="modal-frame" @click.outside="closeEvidence()">
-      <div class="modal-header">
-        <div>
-          <p class="modal-title" x-text="drawer.title"></p>
-          <p class="modal-subtitle" x-text="drawer.subtitle"></p>
-        </div>
-        <button type="button" class="btn-ghost text-xs" @click="closeEvidence()">Close</button>
-      </div>
-      <div class="modal-scroll space-y-3">
-        <template x-for="ev in drawer.items" :key="(ev.canonical_url || ev.url) + '|' + (ev.signal_type || '')">
-          <article class="citation-card">
-            <p class="citation-title" x-text="ev.doc_title || ev.title || ev.domain || 'Source'"></p>
-            <div class="citation-meta">
-              <span class="citation-pill" x-text="ev.signal_label || ev.signal_type"></span>
-              <span class="citation-pill" x-text="'Confidence: ' + (ev.confidence || 0) + '%'"></span>
-              <template x-if="(ev.occurrences || 1) > 1">
-                <span class="citation-pill" x-text="'×' + ev.occurrences"></span>
-              </template>
-            </div>
-            <p class="citation-snippet" x-text="ev.snippet"></p>
-            <div class="citation-source">
-              <a class="citation-url" :href="ev.url" target="_blank" rel="noopener" x-text="ev.url"></a>
-              <a class="link-inline" :href="ev.doc_link" x-text="ev.doc_link && String(ev.doc_link).startsWith('/documents/') ? 'Open document' : 'Open'"></a>
-            </div>
-          </article>
-        </template>
-        <template x-if="drawer.items.length === 0">
-          <div class="empty-state">No evidence items available.</div>
-        </template>
-      </div>
-    </div>
-  </div>
 </div>
 {% endblock %}

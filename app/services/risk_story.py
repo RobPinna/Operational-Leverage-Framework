@@ -1112,6 +1112,85 @@ def _watchlist_score(*, potential_impact_score: int, plausibility_score: int) ->
     return (0.60 * imp) + (0.40 * pla)
 
 
+def _cti_chips_for_risk(
+    *,
+    risk_type: str,
+    signal_counts: dict[str, Any] | None = None,
+    signal_coverage: int = 0,
+) -> tuple[list[str], list[str]]:
+    rt_low = str(risk_type or "").strip().lower()
+    counts = signal_counts if isinstance(signal_counts, dict) else {}
+
+    campaign_chips: list[str] = []
+    mitre_chips: list[str] = []
+    if rt_low in {"impersonation", "brand_abuse", "downstream_pivot", "social_trust_surface_exposure"}:
+        campaign_chips.append("Impersonation opportunity")
+        mitre_chips.extend(
+            ["T1589 Identity Information", "T1591 Victim Org Information", "T1593 Search Open Websites/Domains"]
+        )
+    if int((counts or {}).get("VENDOR_CUE", 0) or 0) > 0:
+        campaign_chips.append("Third-party dependency")
+    if int((counts or {}).get("PROCESS_CUE", 0) or 0) > 0:
+        campaign_chips.append("Workflow trust dependency")
+    if int((counts or {}).get("ORG_CUE", 0) or 0) > 0:
+        campaign_chips.append("Role-based trust cues")
+    if int((counts or {}).get("INFRA_CUE", 0) or 0) > 0:
+        campaign_chips.append("Channel/portal surface")
+    if int(signal_coverage or 0) >= 3:
+        campaign_chips.append("Multi-signal coverage")
+
+    seen = set()
+    campaign_chips = [x for x in campaign_chips if not (x in seen or seen.add(x))]
+    seen = set()
+    mitre_chips = [x for x in mitre_chips if not (x in seen or seen.add(x))]
+    return campaign_chips[:6], mitre_chips[:6]
+
+
+def _risk_posture_score(summary: dict[str, Any]) -> int:
+    status = str(summary.get("status", "WATCHLIST")).strip().upper()
+    impact_band = str(summary.get("impact_band", "MED")).strip().upper()
+    plausibility = int(summary.get("plausibility_score", 0) or 0)
+    confidence = int(summary.get("confidence", 0) or 0)
+    impact_norm = int(round((IMPACT_SCORE.get(impact_band, 2) / 3.0) * 100))
+
+    base = (0.45 * impact_norm) + (0.35 * plausibility) + (0.20 * confidence)
+    status_factor = 1.0
+    if status == "WATCHLIST":
+        status_factor = 0.7
+    elif status == "BASELINE":
+        status_factor = 0.35
+    return int(max(0, min(100, round(base * status_factor))))
+
+
+def _overall_risk_score(rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+    values = [_risk_posture_score(r) for r in rows if isinstance(r, dict)]
+    if not values:
+        return 0
+    return int(max(0, min(100, round(sum(values) / len(values)))))
+
+
+def _find_previous_assessment(db: Session, assessment: Assessment) -> Assessment | None:
+    current_id = int(assessment.id)
+    domain_now = " ".join(str(assessment.domain or "").split()).strip().lower()
+    company_now = " ".join(str(assessment.company_name or "").split()).strip().lower()
+    if not domain_now and not company_now:
+        return None
+
+    candidates = (
+        db.execute(select(Assessment).where(Assessment.id != current_id).order_by(Assessment.created_at.desc()))
+        .scalars()
+        .all()
+    )
+    for cand in candidates:
+        cand_domain = " ".join(str(cand.domain or "").split()).strip().lower()
+        cand_company = " ".join(str(cand.company_name or "").split()).strip().lower()
+        if (domain_now and cand_domain == domain_now) or (company_now and cand_company == company_now):
+            return cand
+    return None
+
+
 def _bundle_tooltip(bundle_type: str) -> str:
     mapping = {
         "IDENTITY_SIGNALS": "Public contact channels and staff/team cues that influence where requests are routed.",
@@ -2085,6 +2164,73 @@ def build_overview_viewmodel(
         or {"ELEVATED": len(elevated), "WATCHLIST": len(watchlist), "BASELINE": len(baseline)}
     )
     risk_summaries = list(ranked.get("all_ranked") or (elevated + watchlist + baseline))
+    top_candidate = elevated[0] if elevated else (risk_summaries[0] if risk_summaries else None)
+    top_candidate_id = int(top_candidate.get("id", 0) or 0) if isinstance(top_candidate, dict) else 0
+
+    ordered_risks: list[dict[str, Any]] = []
+    mitre_codes_set: set[str] = set()
+    for idx, row in enumerate(risk_summaries, start=1):
+        if not isinstance(row, dict):
+            continue
+        counts = {}
+        try:
+            counts = dict((row.get("meta") or {}).get("signal_counts") or {})
+        except Exception:
+            counts = {}
+        _, row_mitre = _cti_chips_for_risk(
+            risk_type=str(row.get("risk_type", "")),
+            signal_counts=counts,
+            signal_coverage=int(row.get("signal_coverage", 0) or 0),
+        )
+        for code in row_mitre:
+            mitre_codes_set.add(str(code))
+        ordered_risks.append(
+            {
+                "rank": int(idx),
+                "id": int(row.get("id", 0) or 0),
+                "is_top": bool(int(row.get("id", 0) or 0) == top_candidate_id and top_candidate_id > 0),
+                "title": str(row.get("title", "") or "Risk"),
+                "primary_risk_type": str(row.get("primary_risk_type", "") or "").strip(),
+                "status": str(row.get("status", "WATCHLIST")),
+                "likelihood": str(row.get("likelihood", "med")),
+                "impact_band": str(row.get("impact_band", "MED")),
+                "evidence_strength": str(row.get("evidence_strength", "WEAK")),
+                "confidence": int(row.get("confidence", 0) or 0),
+                "summary": str(row.get("why_matters", "") or "").strip(),
+                "scenario_url": str(row.get("scenario_url", "")),
+                "posture_score": int(_risk_posture_score(row)),
+            }
+        )
+
+    overall_score_current = int(_overall_risk_score(risk_summaries))
+    prev_assessment = _find_previous_assessment(db, assessment)
+    prev_score: int | None = None
+    score_delta: int | None = None
+    if prev_assessment is not None:
+        prev_ranked = get_ranked_risks(
+            db,
+            prev_assessment,
+            include_baseline=bool(include_baseline),
+            risk_type="",
+            impact="",
+            q="",
+        )
+        prev_rows = list(prev_ranked.get("all_ranked") or [])
+        prev_score = int(_overall_risk_score(prev_rows))
+        score_delta = int(overall_score_current - prev_score)
+
+    overview_metrics = {
+        "detected_risks": int(len(risk_summaries)),
+        "overall_score": int(overall_score_current),
+        "delta_vs_previous": score_delta,
+        "previous_score": prev_score,
+        "previous_assessment_id": int(prev_assessment.id) if prev_assessment is not None else None,
+        "previous_assessment_at": (
+            prev_assessment.created_at.isoformat() if (prev_assessment is not None and prev_assessment.created_at) else ""
+        ),
+    }
+    mitre_codes = sorted(list(mitre_codes_set))
+
     watchlist_preview_limit = 3
     watchlist_full = get_risks_by_status(
         db,
@@ -2149,6 +2295,9 @@ def build_overview_viewmodel(
             "debug_bundle_names": bool(debug_bundle_names),
             "status_counts": status_counts,
             "risk_count": 0,
+            "overview_metrics": overview_metrics,
+            "ordered_risks": ordered_risks,
+            "mitre_codes": mitre_codes,
         }
 
     top = elevated[0] if elevated else None
@@ -2175,6 +2324,9 @@ def build_overview_viewmodel(
             "debug_bundle_names": bool(debug_bundle_names),
             "status_counts": status_counts,
             "risk_count": int(len(elevated)),
+            "overview_metrics": overview_metrics,
+            "ordered_risks": ordered_risks,
+            "mitre_codes": mitre_codes,
         }
 
     top_id = int(top["id"])
@@ -2691,6 +2843,9 @@ def build_overview_viewmodel(
         "debug_bundle_names": bool(debug_bundle_names),
         "status_counts": status_counts,
         "risk_count": int(len(elevated)),
+        "overview_metrics": overview_metrics,
+        "ordered_risks": ordered_risks,
+        "mitre_codes": mitre_codes,
     }
 
 
@@ -2975,29 +3130,11 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         )
 
     # Lightweight CTI tags (heuristic, defensive-only): chips for stakeholders.
-    rt_low = str(row.risk_type or "").strip().lower()
-    campaign_chips: list[str] = []
-    mitre_chips: list[str] = []
-    if rt_low in {"impersonation", "brand_abuse", "downstream_pivot", "social_trust_surface_exposure"}:
-        campaign_chips.append("Impersonation opportunity")
-        mitre_chips.extend(
-            ["T1589 Identity Information", "T1591 Victim Org Information", "T1593 Search Open Websites/Domains"]
-        )
-    if int((counts or {}).get("VENDOR_CUE", 0) or 0) > 0:
-        campaign_chips.append("Third-party dependency")
-    if int((counts or {}).get("PROCESS_CUE", 0) or 0) > 0:
-        campaign_chips.append("Workflow trust dependency")
-    if int((counts or {}).get("ORG_CUE", 0) or 0) > 0:
-        campaign_chips.append("Role-based trust cues")
-    if int((counts or {}).get("INFRA_CUE", 0) or 0) > 0:
-        campaign_chips.append("Channel/portal surface")
-    if int(diversity) >= 3:
-        campaign_chips.append("Multi-signal coverage")
-    # Dedup and cap.
-    seen = set()
-    campaign_chips = [x for x in campaign_chips if not (x in seen or seen.add(x))]
-    seen = set()
-    mitre_chips = [x for x in mitre_chips if not (x in seen or seen.add(x))]
+    campaign_chips, mitre_chips = _cti_chips_for_risk(
+        risk_type=str(row.risk_type or ""),
+        signal_counts=counts,
+        signal_coverage=int(diversity),
+    )
     risk["campaign_chips"] = campaign_chips[:6]
     risk["mitre_chips"] = mitre_chips[:6]
 
@@ -3033,6 +3170,54 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         ],
     }
 
+    story_signals = [
+        {
+            "id": f"sig:{b.get('id')}",
+            "title": str(b.get("title", "")),
+            "detail": f"{int(b.get('item_count', 0) or 0)} items",
+            "icon": str(b.get("icon", "sparkles")),
+            "evidence_set_id": f"bundle:{b.get('id')}",
+        }
+        for b in (recipe_bundles or [])[:6]
+    ]
+    story_abuse_path = []
+    for step in (risk.get("timeline") or [])[:6]:
+        if not isinstance(step, dict):
+            continue
+        story_abuse_path.append(
+            {
+                "id": f"step:{int(step.get('step_index', 0) or 0)}",
+                "title": str(step.get("title", ""))[:90],
+                "detail": str(step.get("brief", ""))[:180],
+                "icon": "route",
+                "evidence_set_id": f"risk:{rid}",
+            }
+        )
+    story_impacts = [
+        {
+            "id": "impact:primary",
+            "title": "Business impact",
+            "detail": _first_sentence(str(row.impact_rationale or row.description or ""), max_chars=180),
+            "icon": "target",
+            "evidence_set_id": f"risk:{rid}",
+        },
+        {
+            "id": "impact:score",
+            "title": "Risk intensity",
+            "detail": (
+                f"Status {str(current_status)} | Impact {str(impact_band)} | Likelihood {str(likelihood).upper()} | "
+                f"Evidence strength {str(evidence_strength)} ({int(conf)}%)."
+            ),
+            "icon": "bar-chart-3",
+            "evidence_set_id": f"risk:{rid}",
+        },
+    ]
+    story_map = {
+        "signals": story_signals[:6],
+        "abuse_path": story_abuse_path[:6],
+        "impacts": story_impacts[:4],
+    }
+
     return {
         "assessment_id": assessment_id,
         "risk": risk,
@@ -3040,4 +3225,5 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         "recipe_bundles": recipe_bundles,
         "evidenceSets": evidence_sets,
         "details": details,
+        "story_map": story_map,
     }

@@ -109,17 +109,10 @@
                 <span class="topbar-pill-label">Server time:</span>
                 <span class="topbar-pill-value" id="serverTimeValue">--:--:--</span>
               </div>
-              <div class="workspace-topbar-left flex items-center gap-3 flex-wrap">
-                {% block topbar_left %}{% endblock %}
-              </div>
+              {% block topbar_left %}{% endblock %}
             </div>
             <div class="workspace-topbar-actions">
               {% block topbar_right %}{% endblock %}
-              <div class="topbar-lang-chip">
-                <i data-lucide="globe-2" class="topbar-chip-icon"></i>
-                <span>English</span>
-                <i data-lucide="chevron-down" class="topbar-chip-caret"></i>
-              </div>
               <div class="topbar-user-chip">
                 <div class="topbar-avatar">{{ (request.session.get('username') or 'U')[:1] | upper }}</div>
                 <div class="topbar-user-copy">
@@ -134,7 +127,9 @@
           </header>
           <div class="workspace-header">
             <div>
+              {% if not hide_section_title %}
               <h2 class="workspace-page-title">{{ section_title if section_title else (title if title else 'Operational Leverage Framework') }}</h2>
+              {% endif %}
             </div>
             <div class="workspace-header-actions">
               {% block page_header_right %}{% endblock %}
