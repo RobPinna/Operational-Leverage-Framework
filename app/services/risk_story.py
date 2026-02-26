@@ -1252,10 +1252,32 @@ def _risk_posture_score(summary: dict[str, Any]) -> int:
 def _overall_risk_score(rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
-    values = [_risk_posture_score(r) for r in rows if isinstance(r, dict)]
-    if not values:
+    valid_rows = [r for r in rows if isinstance(r, dict)]
+    if not valid_rows:
         return 0
-    return int(max(0, min(100, round(sum(values) / len(values)))))
+    status_weight = {
+        "ELEVATED": 1.0,
+        "WATCHLIST": 0.6,
+        "BASELINE": 0.3,
+    }
+    impact_weight = {
+        "HIGH": 1.25,
+        "MED": 1.0,
+        "LOW": 0.75,
+    }
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for row in valid_rows:
+        score = float(_risk_posture_score(row))
+        status = str(row.get("status", "WATCHLIST")).strip().upper()
+        impact_band = str(row.get("impact_band", "MED")).strip().upper()
+        w = float(status_weight.get(status, 0.6)) * float(impact_weight.get(impact_band, 1.0))
+        w = max(0.1, w)
+        weighted_sum += score * w
+        weight_total += w
+    if weight_total <= 0:
+        return 0
+    return int(max(0, min(100, round(weighted_sum / weight_total))))
 
 
 def _find_previous_assessment(db: Session, assessment: Assessment) -> Assessment | None:
@@ -2936,7 +2958,13 @@ def build_overview_viewmodel(
     }
 
 
-def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: int) -> dict[str, Any]:
+def build_risk_detail_viewmodel(
+    db: Session,
+    assessment: Assessment,
+    risk_id: int,
+    *,
+    allow_generated_text: bool = True,
+) -> dict[str, Any]:
     """
     Build a risk-first detail view model for a single RiskObject (Hypothesis row).
     Workflow is a lens under the same risk; no new risks are introduced here.
@@ -3164,43 +3192,48 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
 
     # Risk brief (LLM optional, defensive-only; cached in DB).
     exec_brief = ""
-    try:
-        conditions = [str(b.get("title", "")).strip() for b in recipe_bundles if str(b.get("title", "")).strip()][:3]
-        brief_inp = BriefInput(
-            assessment_id=assessment_id,
-            risk_kind="scenario",
-            risk_id=int(row.id),
-            title=str(row.title or title),
-            risk_type=str(row.risk_type or ""),
-            primary_risk_type=primary_risk_type,
-            risk_vector_summary=risk_vector_summary,
-            conditions=conditions,
-            signal_bundles=[
-                {"title": str(b.get("title", "")), "item_count": int(b.get("item_count", 0) or 0)}
-                for b in (bundles or [])[:8]
-            ],
-            workflow_nodes=[
-                {
-                    "title": str(n.title or ""),
-                    "channel": str(n.channel_type or ""),
-                    "sensitivity": str(n.sensitivity_level or ""),
-                    "trust_friction": int(n.trust_friction_score or 0),
-                }
-                for n in linked_workflows[:6]
-            ],
-            vendor_cues=_vendor_cues_from_evidence(list(evidence_sets.get(f"risk:{rid}", []))),
-            channel_cues=_channel_cues_from_evidence(list(evidence_sets.get(f"risk:{rid}", []))),
-            impact_targets=_impact_targets_from_band(str(impact_band), str(row.risk_type or "")),
-            severity=int(row.severity or 3),
-            likelihood_badge=str(likelihood).upper(),
-            confidence=int(conf),
-            evidence=list(evidence_sets.get(f"risk:{rid}", [])),
-            correlation_hint="",
-        )
-        exec_brief = get_or_generate_brief(db, brief_inp)
-    except Exception:
-        logger.exception("Failed to generate risk brief for assessment %s risk %s", assessment_id, rid)
-        exec_brief = ""
+    if allow_generated_text:
+        try:
+            conditions = [str(b.get("title", "")).strip() for b in recipe_bundles if str(b.get("title", "")).strip()][:3]
+            brief_inp = BriefInput(
+                assessment_id=assessment_id,
+                risk_kind="scenario",
+                risk_id=int(row.id),
+                title=str(row.title or title),
+                risk_type=str(row.risk_type or ""),
+                primary_risk_type=primary_risk_type,
+                risk_vector_summary=risk_vector_summary,
+                conditions=conditions,
+                signal_bundles=[
+                    {"title": str(b.get("title", "")), "item_count": int(b.get("item_count", 0) or 0)}
+                    for b in (bundles or [])[:8]
+                ],
+                workflow_nodes=[
+                    {
+                        "title": str(n.title or ""),
+                        "channel": str(n.channel_type or ""),
+                        "sensitivity": str(n.sensitivity_level or ""),
+                        "trust_friction": int(n.trust_friction_score or 0),
+                    }
+                    for n in linked_workflows[:6]
+                ],
+                vendor_cues=_vendor_cues_from_evidence(list(evidence_sets.get(f"risk:{rid}", []))),
+                channel_cues=_channel_cues_from_evidence(list(evidence_sets.get(f"risk:{rid}", []))),
+                impact_targets=_impact_targets_from_band(str(impact_band), str(row.risk_type or "")),
+                severity=int(row.severity or 3),
+                likelihood_badge=str(likelihood).upper(),
+                confidence=int(conf),
+                evidence=list(evidence_sets.get(f"risk:{rid}", [])),
+                correlation_hint="",
+            )
+            exec_brief = get_or_generate_brief(db, brief_inp)
+        except Exception:
+            logger.exception("Failed to generate risk brief for assessment %s risk %s", assessment_id, rid)
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            exec_brief = ""
 
     risk = {
         "id": rid,
@@ -3230,23 +3263,28 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
             recipe_bundles=recipe_bundles,
             risk_vector_summary=risk_vector_summary,
         )
-    try:
-        how_text = get_or_generate_how_text(
-            db,
-            assessment_id=assessment_id,
-            risk_id=rid,
-            primary_risk_type=primary_risk_type,
-            risk_type=str(row.risk_type or ""),
-            abuse_path=abuse_path_steps_for_how,
-            likelihood=str(likelihood).upper(),
-            impact_band=str(impact_band).upper(),
-            evidence_strength=str(evidence_strength).upper(),
-            confidence=int(conf),
-        )
-        if str(how_text or "").strip():
-            risk_reasoning["how"] = str(how_text).strip()
-    except Exception:
-        logger.exception("Failed to build risk HOW narrative for assessment %s risk %s", assessment_id, rid)
+    if allow_generated_text:
+        try:
+            how_text = get_or_generate_how_text(
+                db,
+                assessment_id=assessment_id,
+                risk_id=rid,
+                primary_risk_type=primary_risk_type,
+                risk_type=str(row.risk_type or ""),
+                abuse_path=abuse_path_steps_for_how,
+                likelihood=str(likelihood).upper(),
+                impact_band=str(impact_band).upper(),
+                evidence_strength=str(evidence_strength).upper(),
+                confidence=int(conf),
+            )
+            if str(how_text or "").strip():
+                risk_reasoning["how"] = str(how_text).strip()
+        except Exception:
+            logger.exception("Failed to build risk HOW narrative for assessment %s risk %s", assessment_id, rid)
+            try:
+                db.rollback()
+            except Exception:
+                pass
     risk["reasoning"] = risk_reasoning
 
     # Lightweight CTI tags (heuristic, defensive-only): chips for stakeholders.
@@ -3349,7 +3387,7 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         {
             "id": "impact:primary",
             "title": "Business impact",
-            "detail": _first_sentence(str(row.impact_rationale or row.description or ""), max_chars=180),
+            "detail": _first_sentence(str(row.impact_rationale or row.description or ""), max_chars=360),
             "icon": "target",
             "evidence_set_id": impact_primary_set_id,
         },

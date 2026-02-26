@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 
 {% block page_header_right %}
-<a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">All risks</a>
+<div class="flex items-center gap-2">
+  <a class="btn-ghost text-xs" href="/assessments/{{ assessment.id }}/risks">All risks</a>
+  <form method="post" action="/assessments/{{ assessment.id }}/risks/{{ vm.risk.id }}/export-pdf">
+    <button class="btn-primary text-xs" type="submit">Download risk report</button>
+  </form>
+</div>
 {% endblock %}
 
 {% block topbar_left %}{% endblock %}
@@ -118,15 +123,27 @@
           <p class="story-col-title">Signals</p>
           <div class="space-y-3">
             {% for c in vm.story_map.signals %}
+            {% set __sig_set = vm.evidenceSets.get(c.evidence_set_id, []) if vm.evidenceSets else [] %}
+            {% set __sig_ev = __sig_set[0] if __sig_set and (__sig_set | length) > 0 else None %}
+            {% set __sig_url = __sig_ev.url if __sig_ev else '' %}
+            {% set __sig_doc_id = __sig_ev.doc_id if __sig_ev else None %}
             <article class="info-card compact">
               <p class="item-title flex items-center gap-2">
                 <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
                 {{ c.title }}
               </p>
               <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
+              {% if __sig_set and (__sig_set | length) > 0 %}
               <div class="mt-3 flex gap-2 flex-wrap">
-                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
+                {% if __sig_url and (__sig_url.startswith('http://') or __sig_url.startswith('https://')) %}
+                <a class="badge" href="{{ __sig_url }}" target="_blank" rel="noreferrer">Evidence</a>
+                {% elif __sig_doc_id %}
+                <a class="badge" href="/documents/{{ __sig_doc_id }}">Evidence</a>
+                {% else %}
+                <a class="badge" href="/assessments/{{ assessment.id }}/evidence">Evidence</a>
+                {% endif %}
               </div>
+              {% endif %}
             </article>
             {% else %}
             <div class="empty-state">No signal bundles available.</div>
@@ -138,6 +155,10 @@
           <p class="story-col-title">Abuse path</p>
           <div class="abuse-timeline">
             {% for c in vm.story_map.abuse_path %}
+            {% set __step_set = vm.evidenceSets.get(c.evidence_set_id, []) if vm.evidenceSets else [] %}
+            {% set __step_ev = __step_set[0] if __step_set and (__step_set | length) > 0 else None %}
+            {% set __step_url = __step_ev.url if __step_ev else '' %}
+            {% set __step_doc_id = __step_ev.doc_id if __step_ev else None %}
             <article class="abuse-step">
               <div class="abuse-step-rail" aria-hidden="true">
                 <span class="abuse-step-dot"></span>
@@ -148,9 +169,17 @@
               <div class="abuse-step-body">
                 <p class="item-title">{{ c.title }}</p>
                 <p class="item-description mt-1">{{ c.detail }}</p>
+                {% if __step_set and (__step_set | length) > 0 %}
                 <div class="mt-2 flex gap-2 flex-wrap">
-                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
+                {% if __step_url and (__step_url.startswith('http://') or __step_url.startswith('https://')) %}
+                <a class="badge" href="{{ __step_url }}" target="_blank" rel="noreferrer">Evidence</a>
+                {% elif __step_doc_id %}
+                <a class="badge" href="/documents/{{ __step_doc_id }}">Evidence</a>
+                {% else %}
+                <a class="badge" href="/assessments/{{ assessment.id }}/evidence">Evidence</a>
+                {% endif %}
                 </div>
+                {% endif %}
               </div>
             </article>
             {% else %}
@@ -168,10 +197,7 @@
                 <i data-lucide="{{ c.icon }}" class="inline-icon"></i>
                 {{ c.title }}
               </p>
-              <p class="item-description clamp-2 mt-1">{{ c.detail }}</p>
-              <div class="mt-3 flex gap-2 flex-wrap">
-                <button type="button" class="badge" @click="openEvidence({{ c.evidence_set_id | tojson }}, {{ c.title | tojson }})">Evidence</button>
-              </div>
+              <p class="item-description mt-1">{{ c.detail }}</p>
             </article>
             {% else %}
             <div class="empty-state">No impact notes.</div>

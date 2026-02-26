@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,7 @@ from app.db import get_db
 from app.dependencies import get_current_user
 from app.models import Assessment
 from app.services.risk_story import build_risk_detail_viewmodel, get_risks_by_status
+from app.utils.reporting import render_risk_pdf
 
 router = APIRouter(tags=["risks"])
 
@@ -154,3 +157,24 @@ def risk_detail(
             "tab": tab_key,
         },
     )
+
+
+@router.post("/assessments/{assessment_id}/risks/{risk_id}/export-pdf")
+def export_risk_pdf(
+    assessment_id: int,
+    risk_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    assessment = db.get(Assessment, assessment_id)
+    if not assessment:
+        return RedirectResponse(url="/assessments", status_code=302)
+
+    vm = build_risk_detail_viewmodel(db, assessment, int(risk_id), allow_generated_text=False)
+    if not vm.get("risk"):
+        return RedirectResponse(url=f"/assessments/{assessment_id}/risks", status_code=302)
+
+    path = render_risk_pdf(assessment, vm)
+    if Path(path).exists():
+        return FileResponse(path, media_type="application/pdf", filename=Path(path).name)
+    return RedirectResponse(url=f"/assessments/{assessment_id}/risks/{risk_id}", status_code=302)

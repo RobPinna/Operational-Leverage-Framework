@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ title if title else 'Operational Leverage Framework' }}</title>
+    <title>{{ title if title else 'Trust Surface | Evidence-led trust risk assessments' }}</title>
     <script>
       tailwind = window.tailwind || {};
       tailwind.config = {
@@ -42,10 +42,10 @@
               </a>
               <div>
                 {% if assessment_context %}
-                <h1 class="brand-title">Operational leverage framework</h1>
+                <h1 class="brand-title">Trust Surface</h1>
                 <p class="brand-subtitle">{{ assessment_context.company_name }}</p>
                 {% else %}
-                <h1 class="brand-title">Operational leverage framework</h1>
+                <h1 class="brand-title">Trust Surface</h1>
                 <p class="brand-subtitle">Risk Intelligence Workspace</p>
                 {% endif %}
               </div>
@@ -127,7 +127,7 @@
           <div class="workspace-header">
             <div>
               {% if not hide_section_title %}
-              <h2 class="workspace-page-title">{{ section_title if section_title else (title if title else 'Operational Leverage Framework') }}</h2>
+              <h2 class="workspace-page-title">{{ section_title if section_title else (title if title else 'Trust Surface') }}</h2>
               {% endif %}
             </div>
             <div class="workspace-header-actions">

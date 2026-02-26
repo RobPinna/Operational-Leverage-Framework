@@ -1,6 +1,8 @@
-﻿# Operational Leverage Framework
+# Trust Surface
 
-Operational Leverage Framework is an evidence-first CTI/cyber risk assessment project that maps public exposure signals into actionable confidence outputs.
+Evidence-led trust risk assessments.
+
+Trust Surface is an evidence-first CTI/cyber risk assessment project that maps public exposure signals into actionable confidence outputs.
 
 > Disclaimer: this project is an MVP/demo. It is provided as-is, with no warranty or assurance of correct/complete functioning in all scenarios.
 > Main usage: run with OpenAI LLM enabled (`OPENAI_API_KEY`). Local/offline mode is for testing only.
@@ -64,3 +66,4 @@ DEFAULT_ADMIN_PASSWORD=change-me-admin-password
 - Browser does not open automatically: use the URL printed in console.
 - OpenAI-related errors: verify `OPENAI_API_KEY` and quota/billing status.
 - Safety checks: `python scripts/run.py safety`.
+
