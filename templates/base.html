@@ -38,14 +38,14 @@
           <div>
             <div class="brand-row mb-5">
               <a class="brand-mark" href="/assessments" aria-label="All assessments">
-                <i data-lucide="sparkles"></i>
+                <i data-lucide="users"></i>
               </a>
               <div>
                 {% if assessment_context %}
-                <h1 class="brand-title">.code</h1>
+                <h1 class="brand-title">Operational leverage framework</h1>
                 <p class="brand-subtitle">{{ assessment_context.company_name }}</p>
                 {% else %}
-                <h1 class="brand-title">.code</h1>
+                <h1 class="brand-title">Operational leverage framework</h1>
                 <p class="brand-subtitle">Risk Intelligence Workspace</p>
                 {% endif %}
               </div>
@@ -106,7 +106,6 @@
             <div class="workspace-topbar-core">
               <div class="topbar-status-pill">
                 <i data-lucide="clock-3" class="topbar-pill-icon"></i>
-                <span class="topbar-pill-label">Server time:</span>
                 <span class="topbar-pill-value" id="serverTimeValue">--:--:--</span>
               </div>
               {% block topbar_left %}{% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set hide_section_title = true %}
 
 {% block topbar_right %}
 <form method="get" action="/assessments/{{ assessment.id }}/risks" class="flex items-center gap-2 flex-wrap justify-end">
@@ -66,34 +67,42 @@
             </div>
             <a class="btn-primary text-xs" href="{{ c.url }}">Open</a>
           </div>
-          <div class="mt-4 flex flex-wrap gap-2 items-center">
-            {% if status_tab == 'WATCHLIST' %}
-            <span class="badge">Needs review</span>
-            {% for m in c.missing_gate_reasons %}
-            <span class="badge">{{ m }}</span>
-            {% endfor %}
-            {% elif status_tab == 'BASELINE' %}
-            <span class="badge">Baseline</span>
-            {% endif %}
+          <div class="mt-4 space-y-2">
+            <div class="flex flex-wrap gap-2 items-center">
+              {% if status_tab == 'WATCHLIST' %}
+              <span class="badge">Needs review</span>
+              {% for m in c.missing_gate_reasons %}
+              <span class="badge">{{ m }}</span>
+              {% endfor %}
+              {% elif status_tab == 'BASELINE' %}
+              <span class="badge">Baseline</span>
+              {% endif %}
+            </div>
             {% if c.primary_risk_type %}
-            <span class="badge badge-primary-risk" data-tooltip="Primary risk type (deterministically assigned).">Primary: {{ c.primary_risk_type }}</span>
+            <div class="flex flex-wrap gap-2 items-center">
+              <span class="badge badge-primary-risk" data-tooltip="Primary risk type (deterministically assigned).">Primary: {{ c.primary_risk_type }}</span>
+            </div>
             {% endif %}
-            <span class="badge-likelihood metric-label">
-              <span class="metric-key">Likelihood:</span>
-              <span class="metric-value {{ c.likelihood }}">{{ c.likelihood | upper }}</span>
-            </span>
-            <span class="badge-severity metric-label">
-              <span class="metric-key">Impact:</span>
-              <span class="metric-value {{ 'high' if c.impact_band == 'HIGH' else ('med' if c.impact_band == 'MED' else 'low') }}">{{ c.impact_band }}</span>
-            </span>
-            <span class="badge-confidence metric-label">
-              <span class="metric-key">Evidence strength:</span>
-              <span class="metric-value {{ 'high' if c.evidence_strength_score >= 75 else ('med' if c.evidence_strength_score >= 50 else 'low') }}">{{ c.evidence_strength }} ({{ c.evidence_strength_score }}%)</span>
-            </span>
-            <span class="badge" data-tooltip="Signal coverage: distinct signal types supporting this risk.">
-              Signal coverage: {{ c.signal_coverage }}
-            </span>
-            <span class="badge" data-tooltip="Evidence refs referenced by this risk.">Evidence refs: {{ c.evidence_count }}</span>
+            <div class="flex flex-wrap gap-2 items-center">
+              <span class="badge-likelihood metric-label">
+                <span class="metric-key">Likelihood:</span>
+                <span class="metric-value {{ c.likelihood }}">{{ c.likelihood | upper }}</span>
+              </span>
+              <span class="badge-severity metric-label">
+                <span class="metric-key">Impact:</span>
+                <span class="metric-value {{ 'high' if c.impact_band == 'HIGH' else ('med' if c.impact_band == 'MED' else 'low') }}">{{ c.impact_band }}</span>
+              </span>
+              <span class="badge-confidence metric-label">
+                <span class="metric-key">Evidence strength:</span>
+                <span class="metric-value {{ 'high' if c.evidence_strength_score >= 75 else ('med' if c.evidence_strength_score >= 50 else 'low') }}">{{ c.evidence_strength }} ({{ c.evidence_strength_score }}%)</span>
+              </span>
+            </div>
+            <div class="flex flex-wrap gap-2 items-center">
+              <span class="badge" data-tooltip="Signal coverage: distinct signal types supporting this risk.">
+                Signal coverage: {{ c.signal_coverage }}
+              </span>
+              <span class="badge" data-tooltip="Evidence refs referenced by this risk.">Evidence refs: {{ c.evidence_count }}</span>
+            </div>
           </div>
         </article>
         {% endfor %}
