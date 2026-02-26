@@ -38,6 +38,7 @@
     {% set _why_ns.text = (_why_ns.text[:-(_tail | length)] | trim) %}
   {% endif %}
 {% endfor %}
+{% set _how_text = (reasoning.how or '') | trim %}
 {% set _full_text = reasoning_full_text if reasoning_full_text is defined else false %}
 <div class="mt-3 grid grid-cols-1 {% if not _compact %}sm:grid-cols-2{% endif %} gap-2">
   <article class="info-card compact">
@@ -76,6 +77,12 @@
   <article class="info-card compact">
     <p class="kpi-label">Why it matters</p>
     <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words {% if _full_text %}line-clamp-none max-h-none overflow-visible{% endif %}">{{ _why_ns.text }}</p>
+    {% if _how_text %}
+    <div class="mt-3">
+      <p class="kpi-label">How</p>
+      <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words {% if _full_text %}line-clamp-none max-h-none overflow-visible{% endif %}">{{ _how_text }}</p>
+    </div>
+    {% endif %}
   </article>
 </div>
 {% endif %}

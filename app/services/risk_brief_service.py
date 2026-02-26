@@ -747,3 +747,274 @@ def get_or_generate_brief(db: Session, inp: BriefInput) -> str:
     db.add(row)
     db.commit()
     return brief
+
+
+def _normalize_abuse_path_steps(value: Any, *, max_items: int = 6) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for idx, item in enumerate((value or [])[:max_items], start=1):
+        if not isinstance(item, dict):
+            continue
+        title = " ".join(str(item.get("title", "")).split()).strip()
+        detail = " ".join(str(item.get("detail", "")).split()).strip()
+        if not title and not detail:
+            continue
+        out.append(
+            {
+                "step": str(item.get("step") or idx),
+                "title": title,
+                "detail": detail,
+            }
+        )
+    return out
+
+
+def _hash_how_input(
+    *,
+    assessment_id: int,
+    risk_id: int,
+    primary_risk_type: str,
+    risk_type: str,
+    abuse_steps: list[dict[str, str]],
+    likelihood: str,
+    impact_band: str,
+    evidence_strength: str,
+    confidence: int,
+) -> str:
+    blob = json.dumps(
+        {
+            "assessment_id": int(assessment_id),
+            "risk_id": int(risk_id),
+            "primary_risk_type": str(primary_risk_type or ""),
+            "risk_type": str(risk_type or ""),
+            "abuse_steps": abuse_steps,
+            "likelihood": str(likelihood or ""),
+            "impact_band": str(impact_band or ""),
+            "evidence_strength": str(evidence_strength or ""),
+            "confidence": int(confidence or 0),
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _sanitize_how_text(text: str) -> str:
+    out = " ".join(str(text or "").split()).strip()
+    out = out.strip("\"' ")
+    out = re.sub(r"(?i)\bhow\s*:\s*", "", out).strip()
+    out = re.sub(r"(?i)\s*(context|notes?|steps?)\s*[:\-]\s*$", "", out).strip()
+    if out.endswith(":"):
+        out = out[:-1].rstrip()
+    return out[:1100]
+
+
+def _local_how_from_abuse_path(
+    *,
+    primary_risk_type: str,
+    abuse_steps: list[dict[str, str]],
+    impact_band: str,
+    likelihood: str,
+) -> str:
+    parts: list[str] = []
+    for step in abuse_steps[:4]:
+        title = " ".join(str(step.get("title", "")).split()).strip()
+        detail = " ".join(str(step.get("detail", "")).split()).strip()
+        if title and detail and detail.lower() not in title.lower():
+            parts.append(f"{title.lower()} ({detail.lower()})")
+        elif detail:
+            parts.append(detail.lower())
+        elif title:
+            parts.append(title.lower())
+    if not parts:
+        return ""
+    risk_label = str(primary_risk_type or "this risk").strip()
+    if len(parts) == 1:
+        text = (
+            f"A likely exploitation path starts when an attacker leverages {parts[0]}. "
+            f"This could support {risk_label.lower()} and create {str(impact_band or 'material').lower()}-impact disruption if controls are bypassed."
+        )
+    elif len(parts) == 2:
+        text = (
+            f"A plausible sequence starts with {parts[0]}, then moves to {parts[1]}. "
+            f"Together, these conditions could enable {risk_label.lower()} and increase pressure on trust-heavy workflows."
+        )
+    else:
+        text = (
+            f"A plausible sequence starts with {parts[0]}, progresses through {parts[1]}, and then reaches {parts[2]}. "
+            f"This chain could enable {risk_label.lower()} before detection, especially when requests appear consistent with public process cues."
+        )
+    text += f" Current likelihood is {str(likelihood or 'MED').upper()} and impact is {str(impact_band or 'MED').upper()}."
+    return _sanitize_how_text(_rewrite_abstract_terms(text))
+
+
+def _call_llm_how(
+    *,
+    api_key: str,
+    model: str,
+    primary_risk_type: str,
+    risk_type: str,
+    abuse_steps: list[dict[str, str]],
+    likelihood: str,
+    impact_band: str,
+    evidence_strength: str,
+    confidence: int,
+    retry_hint: str = "",
+) -> str | None:
+    payload_ctx = {
+        "primary_risk_type": str(primary_risk_type or ""),
+        "risk_type": str(risk_type or ""),
+        "likelihood": str(likelihood or ""),
+        "impact_band": str(impact_band or ""),
+        "evidence_strength": str(evidence_strength or ""),
+        "confidence": int(confidence or 0),
+        "abuse_path": abuse_steps[:6],
+    }
+    system_prompt = (
+        "You are a CTI analyst writing defensive risk narratives for business stakeholders. "
+        "Use only the provided structured evidence. "
+        "Do not provide instructions, scripts, lures, or step-by-step attack guidance."
+    )
+    user_prompt = (
+        "Write one concise, human-readable paragraph (90-150 words) titled implicitly as 'How' "
+        "that explains how this risk could be exploited, using only the abuse_path steps in order.\n"
+        "Requirements:\n"
+        "- Keep it concrete and non-template.\n"
+        "- Mention uncertainty using terms like 'could', 'likely', or 'plausible'.\n"
+        "- Do not invent vendors/channels/workflows not present in JSON.\n"
+        "- No bullets, no markdown, no headings, no JSON.\n"
+        "- End with the potential business consequence in plain language.\n"
+        f"{('Retry hint: ' + retry_hint) if retry_hint else ''}\n\n"
+        "JSON context:\n"
+        + json.dumps(payload_ctx, ensure_ascii=True)
+    )
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        res = _post_llm_with_backoff(
+            url="https://api.openai.com/v1/chat/completions",
+            payload=payload,
+            headers=headers,
+            timeout_seconds=30,
+            caller="RiskHow",
+        )
+        if res is None or int(res.status_code or 0) >= 400:
+            if res is not None and int(res.status_code or 0) >= 400:
+                logger.warning("Risk HOW LLM request failed: status=%s", res.status_code)
+            return None
+        body = res.json()
+        content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+        text = _sanitize_how_text(str(content or ""))
+        if not text:
+            return None
+        text = _rewrite_abstract_terms(text)
+        if _contains_prohibited(text):
+            logger.info("Risk HOW blocked by safety filter; switching to local fallback")
+            return None
+        return text
+    except Exception:
+        logger.exception("Risk HOW LLM request failed unexpectedly")
+        return None
+
+
+def get_or_generate_how_text(
+    db: Session,
+    *,
+    assessment_id: int,
+    risk_id: int,
+    primary_risk_type: str,
+    risk_type: str,
+    abuse_path: list[dict[str, Any]],
+    likelihood: str,
+    impact_band: str,
+    evidence_strength: str,
+    confidence: int,
+) -> str:
+    steps = _normalize_abuse_path_steps(abuse_path, max_items=6)
+    if not steps:
+        return ""
+
+    input_hash = _hash_how_input(
+        assessment_id=int(assessment_id),
+        risk_id=int(risk_id),
+        primary_risk_type=str(primary_risk_type or ""),
+        risk_type=str(risk_type or ""),
+        abuse_steps=steps,
+        likelihood=str(likelihood or ""),
+        impact_band=str(impact_band or ""),
+        evidence_strength=str(evidence_strength or ""),
+        confidence=int(confidence or 0),
+    )
+    existing = (
+        db.execute(
+            select(RiskBrief)
+            .where(
+                RiskBrief.assessment_id == int(assessment_id),
+                RiskBrief.risk_kind == "scenario_how",
+                RiskBrief.risk_id == int(risk_id),
+                RiskBrief.input_hash == input_hash,
+            )
+            .order_by(RiskBrief.created_at.desc(), RiskBrief.id.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if existing and str(existing.brief or "").strip():
+        return str(existing.brief).strip()
+
+    llm_cfg = get_llm_runtime_config(db)
+    model = str(llm_cfg.get("model") or "LOCAL").strip()
+    api_key = str(llm_cfg.get("api_key") or "").strip()
+    is_local = model.upper() == "LOCAL" or not api_key
+
+    how_text = ""
+    if not is_local:
+        last_empty = False
+        for attempt in range(0, 2):
+            hint = ""
+            if attempt == 1 and last_empty:
+                hint = "Use simpler sentence structure and directly connect step 1 -> step 2 -> step 3."
+            out = _call_llm_how(
+                api_key=api_key,
+                model=model,
+                primary_risk_type=primary_risk_type,
+                risk_type=risk_type,
+                abuse_steps=steps,
+                likelihood=likelihood,
+                impact_band=impact_band,
+                evidence_strength=evidence_strength,
+                confidence=confidence,
+                retry_hint=hint,
+            )
+            if out:
+                how_text = out
+                break
+            last_empty = True
+    if not how_text:
+        how_text = _local_how_from_abuse_path(
+            primary_risk_type=primary_risk_type,
+            abuse_steps=steps,
+            impact_band=impact_band,
+            likelihood=likelihood,
+        )
+    how_text = _sanitize_how_text(_rewrite_abstract_terms(how_text))
+    if not how_text:
+        return ""
+
+    row = RiskBrief(
+        assessment_id=int(assessment_id),
+        risk_kind="scenario_how",
+        risk_id=int(risk_id),
+        input_hash=input_hash,
+        model=("LOCAL" if is_local or not api_key else model)[:64],
+        brief=how_text,
+    )
+    db.add(row)
+    db.commit()
+    return how_text

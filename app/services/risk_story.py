@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Assessment, Document, Evidence, Hypothesis, WorkflowNode
-from app.services.risk_brief_service import BriefInput, get_or_generate_brief
+from app.services.risk_brief_service import BriefInput, get_or_generate_brief, get_or_generate_how_text
 from app.services.evidence_quality_classifier import classify_evidence
 from app.services.signal_model import (
     SIGNAL_ICONS,
@@ -2981,6 +2981,21 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
     if not isinstance(timeline, list) or not timeline:
         meta["risk_hint"] = str(row.title or "")
         timeline = timeline_for_risk(str(row.risk_type or ""), meta)
+    abuse_path_steps_for_how: list[dict[str, str]] = []
+    for idx, step in enumerate((timeline or [])[:6], start=1):
+        if not isinstance(step, dict):
+            continue
+        step_title = " ".join(str(step.get("title", "")).split()).strip()
+        step_detail = " ".join(str(step.get("brief", "")).split()).strip()
+        if not step_title and not step_detail:
+            continue
+        abuse_path_steps_for_how.append(
+            {
+                "step": str(idx),
+                "title": step_title,
+                "detail": step_detail,
+            }
+        )
 
     # Bundles (recipe)
     bundles = _build_bundles_for_risk(
@@ -3120,14 +3135,32 @@ def build_risk_detail_viewmodel(db: Session, assessment: Assessment, risk_id: in
         "timeline": timeline[:7] if isinstance(timeline, list) else [],
     }
     if isinstance(ranked_row, dict) and isinstance(ranked_row.get("reasoning"), dict):
-        risk["reasoning"] = dict(ranked_row.get("reasoning") or {})
+        risk_reasoning = dict(ranked_row.get("reasoning") or {})
     else:
-        risk["reasoning"] = _reasoning_block_for_risk(
+        risk_reasoning = _reasoning_block_for_risk(
             risk=risk,
             evidence=list(evidence_sets.get(f"risk:{rid}", []) or []),
             recipe_bundles=recipe_bundles,
             risk_vector_summary=risk_vector_summary,
         )
+    try:
+        how_text = get_or_generate_how_text(
+            db,
+            assessment_id=assessment_id,
+            risk_id=rid,
+            primary_risk_type=primary_risk_type,
+            risk_type=str(row.risk_type or ""),
+            abuse_path=abuse_path_steps_for_how,
+            likelihood=str(likelihood).upper(),
+            impact_band=str(impact_band).upper(),
+            evidence_strength=str(evidence_strength).upper(),
+            confidence=int(conf),
+        )
+        if str(how_text or "").strip():
+            risk_reasoning["how"] = str(how_text).strip()
+    except Exception:
+        logger.exception("Failed to build risk HOW narrative for assessment %s risk %s", assessment_id, rid)
+    risk["reasoning"] = risk_reasoning
 
     # Lightweight CTI tags (heuristic, defensive-only): chips for stakeholders.
     campaign_chips, mitre_chips = _cti_chips_for_risk(
