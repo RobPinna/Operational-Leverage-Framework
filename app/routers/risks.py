@@ -152,7 +152,7 @@ def risk_detail(
             "active": "assessment_risks",
             "assessment": assessment,
             "assessment_context": _assessment_context(assessment),
-            "section_title": str(vm["risk"].get("title") or "Risk"),
+            "section_title": str(vm["risk"].get("headline") or vm["risk"].get("title") or "Risk"),
             "vm": vm,
             "tab": tab_key,
         },

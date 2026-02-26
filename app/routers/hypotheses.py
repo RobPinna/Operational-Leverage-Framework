@@ -1,3 +1,6 @@
+import re
+from html import escape
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -69,6 +72,72 @@ def _impact_points(value: str) -> list[str]:
     else:
         parts = [raw.strip().capitalize()]
     return parts[:3] if parts else ["Operations"]
+
+
+def _code_sort_key(value: str) -> tuple[int, str]:
+    raw = " ".join(str(value or "").split()).strip().upper()
+    m = re.match(r"^E-(\d{2,3})$", raw)
+    if m:
+        return (int(m.group(1)), raw)
+    return (9999, raw)
+
+
+def _highlight_text_with_terms(text: str, terms: list[str]) -> str:
+    raw = str(text or "")
+    if not raw:
+        return escape("No extracted text")
+
+    compiled: list[re.Pattern[str]] = []
+    seen: set[str] = set()
+    for term in terms or []:
+        clean = " ".join(str(term or "").split()).strip()
+        if not clean:
+            continue
+        low = clean.lower()
+        if low.startswith("role:"):
+            clean = clean.split(":", 1)[1].strip()
+            # Avoid noisy highlights like "it" (pronoun false positives).
+            if len(clean) < 3:
+                continue
+        key = clean.lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if re.fullmatch(r"[A-Za-z0-9_]+", clean):
+            compiled.append(re.compile(rf"\b{re.escape(clean)}\b", flags=re.IGNORECASE))
+        else:
+            compiled.append(re.compile(re.escape(clean), flags=re.IGNORECASE))
+
+    if not compiled:
+        return escape(raw)
+
+    spans: list[tuple[int, int]] = []
+    for pat in compiled:
+        for match in pat.finditer(raw):
+            s, e = int(match.start()), int(match.end())
+            if s < e:
+                spans.append((s, e))
+    if not spans:
+        return escape(raw)
+    spans.sort(key=lambda x: (x[0], -(x[1] - x[0])))
+
+    merged: list[tuple[int, int]] = []
+    for s, e in spans:
+        if not merged or s > merged[-1][1]:
+            merged.append((s, e))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+
+    out: list[str] = []
+    cursor = 0
+    for s, e in merged:
+        if s > cursor:
+            out.append(escape(raw[cursor:s]))
+        out.append(f"<mark class=\"doc-evidence-hl\">{escape(raw[s:e])}</mark>")
+        cursor = e
+    if cursor < len(raw):
+        out.append(escape(raw[cursor:]))
+    return "".join(out)
 
 
 def _short_risk_title(*, assessment: Assessment, row: Hypothesis) -> str:
@@ -572,6 +641,42 @@ def document_detail(
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
     assessment = db.get(Assessment, row.assessment_id)
+    evidence_rows: list[dict] = []
+    evidence_codes: list[str] = []
+    artifact_terms: list[str] = []
+    highlighted_text = escape(str(row.extracted_text or "No extracted text"))
+    if assessment:
+        try:
+            from app.services.evidence_log import build_evidence_log_viewmodel
+
+            log_vm = build_evidence_log_viewmodel(db, assessment, q="", signal_type="")
+            for item in list(log_vm.get("rows") or []):
+                if int(item.get("doc_id") or 0) != int(doc_id):
+                    continue
+                evidence_rows.append(dict(item))
+        except Exception:
+            evidence_rows = []
+
+    if evidence_rows:
+        seen_codes: set[str] = set()
+        seen_terms: set[str] = set()
+        for item in evidence_rows:
+            code = " ".join(str(item.get("evidence_code", "")).split()).strip().upper()
+            if code and code not in seen_codes:
+                seen_codes.add(code)
+                evidence_codes.append(code)
+            for art in list(item.get("artifacts") or []):
+                term = " ".join(str(art or "").split()).strip()
+                if not term:
+                    continue
+                key = term.lower()
+                if key in seen_terms:
+                    continue
+                seen_terms.add(key)
+                artifact_terms.append(term)
+        evidence_codes.sort(key=_code_sort_key)
+        highlighted_text = _highlight_text_with_terms(str(row.extracted_text or ""), artifact_terms)
+
     return request.app.state.templates.TemplateResponse(
         "document_detail.html",
         {
@@ -583,5 +688,9 @@ def document_detail(
             "assessment_context": _assessment_context(assessment) if assessment else None,
             "section_title": "Document Detail",
             "section_subtitle": "Normalized document content referenced by risk scenario evidence.",
+            "evidence_rows": evidence_rows,
+            "evidence_codes": evidence_codes,
+            "artifact_terms": artifact_terms,
+            "highlighted_text": highlighted_text,
         },
     )

@@ -220,6 +220,37 @@ def _risk_display_name(*, primary_risk_type: str, fallback_outcome: str) -> str:
     return _sentence_case(raw) if raw else "Risk"
 
 
+def _single_risk_headline(
+    *,
+    primary_risk_type: str,
+    title: str,
+    risk_vector_summary: str,
+) -> str:
+    primary = " ".join(str(primary_risk_type or "").split()).strip()
+    if primary:
+        return _sentence_case(primary)
+
+    t = " ".join(str(title or "").split()).strip()
+    if t:
+        t = re.sub(r"^\s*top\s*risk\s*[:\-]\s*", "", t, flags=re.IGNORECASE).strip()
+        if t:
+            return _sentence_case(t)
+
+    vector = " ".join(str(risk_vector_summary or "").split()).strip()
+    if vector:
+        vector = re.sub(r"^\s*top\s*risk\s*[:\-]\s*", "", vector, flags=re.IGNORECASE).strip()
+        low = vector.lower()
+        for sep in (" leading to ", " enabled by ", " from ", " via ", " due to "):
+            if sep in low:
+                idx = low.find(sep)
+                candidate = vector[:idx].strip(" .,:;-")
+                if candidate:
+                    return _sentence_case(candidate)
+        if vector:
+            return _sentence_case(vector.strip(" .,:;-"))
+    return "Risk"
+
+
 def _first_sentence(value: str, max_chars: int = 180) -> str:
     text = " ".join(str(value or "").split()).strip()
     if not text:
@@ -352,9 +383,6 @@ def _why_it_matters_cti(
     if has_vendor:
         impact_line += " Third-party workflow cues can further strengthen attacker plausibility."
 
-    fallback = _first_sentence(fallback_context, max_chars=190)
-    if fallback and not _is_generic_why_text(fallback):
-        return f"{actor_line} {impact_line} Context: {fallback}"
     return f"{actor_line} {impact_line}"
 
 
@@ -450,6 +478,8 @@ def _hint_priority(value: str) -> int:
     low = " ".join(str(value or "").split()).strip().lower()
     if not low:
         return 99
+    if re.match(r"^e-\d{2,3}\b", low):
+        return -1
     if low.startswith("found public email:"):
         return 0
     if low.startswith("found public phone/contact number:"):
@@ -459,6 +489,878 @@ def _hint_priority(value: str) -> int:
     if low.startswith("found publicly targetable role cue:"):
         return 3
     return 4
+
+
+_REF_KEYWORD_STOPWORDS = {
+    "public",
+    "official",
+    "exposed",
+    "multiple",
+    "channel",
+    "channels",
+    "entrypoints",
+    "entrypoint",
+    "signal",
+    "signals",
+    "workflow",
+    "cues",
+}
+
+
+def _add_signal_ref(
+    refs: list[dict[str, Any]],
+    *,
+    seen: set[str],
+    text: str,
+    tags: list[str],
+    max_items: int,
+    code: str = "",
+) -> None:
+    if len(refs) >= max_items:
+        return
+    clean = " ".join(str(text or "").split()).strip()
+    if not clean:
+        return
+    key = re.sub(r"[^a-z0-9]+", " ", clean.lower()).strip()
+    if not key or key in seen:
+        return
+    seen.add(key)
+    uniq_tags: list[str] = []
+    for tag in tags:
+        t = str(tag or "").strip().lower()
+        if t and t not in uniq_tags:
+            uniq_tags.append(t)
+    c = " ".join(str(code or "").split()).strip().upper()
+    if not re.match(r"^E-\d{2,3}$", c):
+        c = f"E-{len(refs) + 1:02d}"
+    refs.append({"code": c, "text": clean, "tags": uniq_tags})
+
+
+def _evidence_identity_key(ev: dict[str, Any]) -> str:
+    u = str(ev.get("canonical_url") or ev.get("url") or "").strip()
+    u = _canonical_url(u)
+    st = str(ev.get("signal_type") or "OTHER").strip().upper() or "OTHER"
+    did = str(ev.get("doc_id") or "").strip()
+    return f"{u}|{st}|{did}"
+
+
+def _evidence_code_for_index(idx: int) -> str:
+    n = max(1, int(idx))
+    if n <= 99:
+        return f"E-{n:02d}"
+    return f"E-{n:03d}"
+
+
+def _artifact_code_key(value: str) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _artifact_tokens_for_evidence(ev: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _push(value: str) -> None:
+        clean = " ".join(str(value or "").split()).strip()
+        key = _artifact_code_key(clean)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        out.append(clean)
+
+    hints = ev.get("indicator_hints")
+    hint_lines = [str(x or "") for x in hints] if isinstance(hints, list) else []
+    for line in hint_lines:
+        clean = " ".join(str(line or "").split()).strip()
+        if not clean:
+            continue
+        low = clean.lower()
+        if low.startswith("found public email:"):
+            _push(clean.split(":", 1)[1].strip())
+            continue
+        if low.startswith("found public phone/contact number:"):
+            _push(clean.split(":", 1)[1].strip())
+            continue
+        if low.startswith("found publicly targetable role cue:"):
+            role = clean.split(":", 1)[1].strip()
+            _push(f"role: {role}")
+            continue
+        em = EMAIL_PATTERN.search(clean)
+        if em:
+            _push(em.group(0).lower())
+        ph = PHONE_PATTERN.search(clean)
+        if ph:
+            _push(" ".join(str(ph.group(0)).split()))
+        for role in ROLE_HINTS:
+            if role in low:
+                _push(f"role: {role}")
+                break
+
+    blob = " ".join(
+        [
+            str(ev.get("title", "") or ""),
+            str(ev.get("snippet", "") or ""),
+            str(ev.get("url", "") or ""),
+            " ".join(hint_lines),
+        ]
+    )
+    for em in EMAIL_PATTERN.findall(blob):
+        _push(em.lower())
+    for ph in PHONE_PATTERN.findall(blob):
+        _push(" ".join(str(ph).split()))
+    low_blob = blob.lower()
+    for role in ROLE_HINTS:
+        if role in low_blob:
+            _push(f"role: {role}")
+
+    url_art = _artifact_from_url(str(ev.get("url", "") or ""))
+    if url_art:
+        _push(url_art)
+
+    return out[:16]
+
+
+def _artifact_tokens_from_hint_line(value: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _push(raw: str) -> None:
+        clean = " ".join(str(raw or "").split()).strip()
+        key = _artifact_code_key(clean)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        out.append(clean)
+
+    line = " ".join(str(value or "").split()).strip()
+    if not line:
+        return out
+    low = line.lower()
+    if low.startswith("found public email:"):
+        _push(line.split(":", 1)[1].strip())
+    elif low.startswith("found public phone/contact number:"):
+        _push(line.split(":", 1)[1].strip())
+    elif low.startswith("found publicly targetable role cue:"):
+        _push(f"role: {line.split(':', 1)[1].strip()}")
+
+    for em in EMAIL_PATTERN.findall(line):
+        _push(em.lower())
+    for ph in PHONE_PATTERN.findall(line):
+        _push(" ".join(str(ph).split()))
+    for role in ROLE_HINTS:
+        if role in low:
+            _push(f"role: {role}")
+    if "http" in low or "/" in low:
+        _push(_artifact_from_url(line))
+    return out[:8]
+
+
+def build_assessment_evidence_code_map(
+    db: Session,
+    assessment: Assessment,
+    *,
+    ranked_snapshot: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    ranked = ranked_snapshot if isinstance(ranked_snapshot, dict) else get_ranked_risks(db, assessment)
+    evidence_sets = dict(ranked.get("evidence_sets") or {})
+    hypotheses = list(ranked.get("hypotheses") or [])
+    workflow_nodes = list(ranked.get("workflow_nodes") or [])
+
+    unique_rows: dict[str, dict[str, Any]] = {}
+    for h in hypotheses:
+        hid = int(getattr(h, "id", 0) or 0)
+        if hid <= 0:
+            continue
+        for ev in list(evidence_sets.get(f"risk:{hid}", []) or []):
+            if not isinstance(ev, dict):
+                continue
+            k = _evidence_identity_key(ev)
+            if not k.strip("|") or k in unique_rows:
+                continue
+            unique_rows[k] = {
+                "canonical_url": str(ev.get("canonical_url") or _canonical_url(str(ev.get("url", "")))),
+                "url": str(ev.get("url", "")),
+                "signal_type": str(ev.get("signal_type", "OTHER") or "OTHER"),
+                "doc_id": ev.get("doc_id"),
+            }
+
+    for n in workflow_nodes:
+        evs = from_json(getattr(n, "evidence_refs_json", "") or "[]", [])
+        if not isinstance(evs, list):
+            continue
+        for ev in evs:
+            if not isinstance(ev, dict):
+                continue
+            raw_url = str(ev.get("url", "")).strip()
+            if not raw_url:
+                continue
+            tmp = {
+                "canonical_url": _canonical_url(raw_url),
+                "url": raw_url,
+                "signal_type": str(ev.get("signal_type", "") or "OTHER"),
+                "doc_id": ev.get("doc_id"),
+            }
+            k = _evidence_identity_key(tmp)
+            if not k.strip("|") or k in unique_rows:
+                continue
+            unique_rows[k] = tmp
+
+    rows = sorted(
+        list(unique_rows.values()),
+        key=lambda r: (
+            str(r.get("canonical_url", "")).lower(),
+            str(r.get("signal_type", "")).upper(),
+            str(r.get("doc_id") or ""),
+        ),
+    )
+    out: dict[str, str] = {}
+    for idx, row in enumerate(rows, start=1):
+        out[_evidence_identity_key(row)] = _evidence_code_for_index(idx)
+    return out
+
+
+def build_assessment_artifact_code_map(
+    db: Session,
+    assessment: Assessment,
+    *,
+    ranked_snapshot: dict[str, Any] | None = None,
+    evidence_code_map: dict[str, str] | None = None,
+) -> dict[str, str]:
+    ranked = ranked_snapshot if isinstance(ranked_snapshot, dict) else get_ranked_risks(db, assessment)
+    code_map = (
+        dict(evidence_code_map)
+        if isinstance(evidence_code_map, dict)
+        else build_assessment_evidence_code_map(db, assessment, ranked_snapshot=ranked)
+    )
+    evidence_sets = dict(ranked.get("evidence_sets") or {})
+    indicator_hints_by_url = dict(ranked.get("indicator_hints_by_url") or {})
+    workflow_nodes = list(ranked.get("workflow_nodes") or [])
+    out: dict[str, str] = {}
+    for key, rows in evidence_sets.items():
+        if not str(key).startswith("risk:"):
+            continue
+        for ev in rows or []:
+            if not isinstance(ev, dict):
+                continue
+            code = code_map.get(_evidence_identity_key(ev), "")
+            if not code:
+                continue
+            for token in _artifact_tokens_for_evidence(ev):
+                k = _artifact_code_key(token)
+                if k and k not in out:
+                    out[k] = code
+            canonical = str(ev.get("canonical_url") or _canonical_url(str(ev.get("url", "")))).strip()
+            for hint in indicator_hints_by_url.get(canonical, []):
+                for token in _artifact_tokens_from_hint_line(str(hint or "")):
+                    k = _artifact_code_key(token)
+                    if k and k not in out:
+                        out[k] = code
+    for node in workflow_nodes:
+        evs = from_json(getattr(node, "evidence_refs_json", "") or "[]", [])
+        if not isinstance(evs, list):
+            continue
+        for raw in evs:
+            if not isinstance(raw, dict):
+                continue
+            raw_url = str(raw.get("url", "")).strip()
+            if not raw_url:
+                continue
+            tmp = {
+                "canonical_url": _canonical_url(raw_url),
+                "url": raw_url,
+                "title": str(raw.get("title", "")),
+                "snippet": str(raw.get("snippet", "")),
+                "signal_type": str(raw.get("signal_type", "") or "OTHER"),
+                "doc_id": raw.get("doc_id"),
+                "indicator_hints": [],
+            }
+            code = code_map.get(_evidence_identity_key(tmp), "")
+            if not code:
+                continue
+            for token in _artifact_tokens_for_evidence(tmp):
+                k = _artifact_code_key(token)
+                if k and k not in out:
+                    out[k] = code
+            for hint in indicator_hints_by_url.get(str(tmp.get("canonical_url", "")), []):
+                for token in _artifact_tokens_from_hint_line(str(hint or "")):
+                    k = _artifact_code_key(token)
+                    if k and k not in out:
+                        out[k] = code
+    return out
+
+
+def build_assessment_code_document_map(
+    db: Session,
+    assessment: Assessment,
+    *,
+    ranked_snapshot: dict[str, Any] | None = None,
+    evidence_code_map: dict[str, str] | None = None,
+) -> dict[str, int]:
+    ranked = ranked_snapshot if isinstance(ranked_snapshot, dict) else get_ranked_risks(db, assessment)
+    code_map = (
+        dict(evidence_code_map)
+        if isinstance(evidence_code_map, dict)
+        else build_assessment_evidence_code_map(db, assessment, ranked_snapshot=ranked)
+    )
+    evidence_sets = dict(ranked.get("evidence_sets") or {})
+    workflow_nodes = list(ranked.get("workflow_nodes") or [])
+    out: dict[str, int] = {}
+
+    for rows in evidence_sets.values():
+        for ev in rows or []:
+            if not isinstance(ev, dict):
+                continue
+            code = str(code_map.get(_evidence_identity_key(ev), "")).strip().upper()
+            did = ev.get("doc_id")
+            if code and str(did).isdigit() and code not in out:
+                out[code] = int(did)
+
+    for node in workflow_nodes:
+        evs = from_json(getattr(node, "evidence_refs_json", "") or "[]", [])
+        if not isinstance(evs, list):
+            continue
+        for raw in evs:
+            if not isinstance(raw, dict):
+                continue
+            did = raw.get("doc_id")
+            raw_url = str(raw.get("url", "")).strip()
+            if not str(did).isdigit() or not raw_url:
+                continue
+            tmp = {
+                "canonical_url": _canonical_url(raw_url),
+                "url": raw_url,
+                "signal_type": str(raw.get("signal_type", "") or "OTHER"),
+                "doc_id": did,
+            }
+            code = str(code_map.get(_evidence_identity_key(tmp), "")).strip().upper()
+            if code and code not in out:
+                out[code] = int(did)
+    return out
+
+
+def _clip_artifact(value: str, *, max_chars: int = 90) -> str:
+    value = " ".join(str(value or "").split()).strip()
+    if len(value) <= max_chars:
+        return value
+    return f"{value[: max(8, max_chars - 3)]}..."
+
+
+def _artifact_from_url(url: str) -> str:
+    raw = " ".join(str(url or "").split()).strip()
+    if not raw:
+        return ""
+    if raw.lower().startswith("mailto:"):
+        return _clip_artifact(raw.split(":", 1)[1].strip(), max_chars=80)
+    try:
+        u = urlparse(raw)
+        host = (u.netloc or "").lower().split(":")[0]
+        path = (u.path or "").strip()
+        if host and path and path != "/":
+            return _clip_artifact(f"{host}{path}", max_chars=80)
+        if host:
+            return _clip_artifact(host, max_chars=80)
+    except Exception:
+        return _clip_artifact(raw, max_chars=80)
+    return _clip_artifact(raw, max_chars=80)
+
+
+def _with_artifact(base: str, artifact: str = "") -> str:
+    label = " ".join(str(base or "").split()).strip()
+    art = " ".join(str(artifact or "").split()).strip()
+    if label and art:
+        return f"{label} ({art})"
+    return label
+
+
+def _build_coded_signal_refs(
+    evidence: list[dict[str, Any]],
+    *,
+    extra_hints: list[str] | None = None,
+    evidence_code_map: dict[str, str] | None = None,
+    artifact_code_map: dict[str, str] | None = None,
+    max_items: int = 8,
+) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    rows = [ev for ev in (evidence or []) if isinstance(ev, dict)]
+    hint_lines: list[str] = []
+    for hint in extra_hints or []:
+        line = " ".join(str(hint or "").split()).strip()
+        if line and line not in hint_lines:
+            hint_lines.append(line)
+    if not rows and not hint_lines:
+        return refs
+
+    blobs: list[str] = []
+    emails: list[str] = []
+    phones: list[str] = []
+    page_artifacts: list[str] = []
+    privacy_artifacts: list[str] = []
+    workflow_artifacts: list[str] = []
+    vendor_artifacts: list[str] = []
+    role_hits: list[str] = []
+    email_codes: dict[str, str] = {}
+    phone_codes: dict[str, str] = {}
+    role_codes: dict[str, str] = {}
+    page_codes: dict[str, str] = {}
+    privacy_codes: list[str] = []
+    signal_type_codes: dict[str, str] = {}
+    contact_like_codes: list[str] = []
+    code_map = dict(evidence_code_map or {})
+    artifact_map = {str(k).lower(): str(v).strip().upper() for k, v in dict(artifact_code_map or {}).items()}
+
+    def _code_from_artifact(value: str) -> str:
+        key = _artifact_code_key(value)
+        return str(artifact_map.get(key, "")).strip().upper()
+
+    def _first_valid_code(values: list[str]) -> str:
+        for val in values:
+            c = " ".join(str(val or "").split()).strip().upper()
+            if re.match(r"^E-\d{2,3}$", c):
+                return c
+        return ""
+
+    for ev in rows:
+        row_code = ""
+        if code_map:
+            row_code = str(code_map.get(_evidence_identity_key(ev), "")).strip().upper()
+        hints = ev.get("indicator_hints")
+        hint_blob = " ".join(str(x or "") for x in hints) if isinstance(hints, list) else ""
+        blob = " ".join(
+            [
+                str(ev.get("title", "") or ""),
+                str(ev.get("snippet", "") or ""),
+                str(ev.get("url", "") or ""),
+                str(ev.get("doc_title", "") or ""),
+                hint_blob,
+            ]
+        )
+        blobs.append(
+            " ".join(
+                [
+                    blob,
+                    str(ev.get("signal_type", "") or ""),
+                    str(ev.get("evidence_kind", "") or ""),
+                ]
+            )
+        )
+        for em in EMAIL_PATTERN.findall(blob):
+            low = em.lower()
+            if low not in emails:
+                emails.append(low)
+            if row_code and low not in email_codes:
+                email_codes[low] = row_code
+            if low not in email_codes:
+                mapped = _code_from_artifact(low)
+                if mapped:
+                    email_codes[low] = mapped
+        raw_url = str(ev.get("url", "") or "").strip()
+        if raw_url.lower().startswith("mailto:"):
+            candidate = raw_url.split(":", 1)[1].strip().lower()
+            if candidate and candidate not in emails:
+                emails.append(candidate)
+            if candidate and row_code and candidate not in email_codes:
+                email_codes[candidate] = row_code
+        for ph in PHONE_PATTERN.findall(blob):
+            normalized = " ".join(str(ph).split())
+            if normalized and normalized not in phones:
+                phones.append(normalized)
+            if normalized and row_code and normalized not in phone_codes:
+                phone_codes[normalized] = row_code
+            if normalized and normalized not in phone_codes:
+                mapped = _code_from_artifact(normalized)
+                if mapped:
+                    phone_codes[normalized] = mapped
+        url_art = _artifact_from_url(raw_url)
+        if url_art and url_art not in page_artifacts:
+            page_artifacts.append(url_art)
+        if url_art and row_code and url_art not in page_codes:
+            page_codes[url_art] = row_code
+        if url_art and url_art not in page_codes:
+            mapped = _code_from_artifact(url_art)
+            if mapped:
+                page_codes[url_art] = mapped
+
+        st = str(ev.get("signal_type", "")).strip().upper()
+        if row_code and st and st not in signal_type_codes:
+            signal_type_codes[st] = row_code
+
+        low_blob = blob.lower()
+        if any(k in low_blob for k in ("privacy", "legal", "gdpr", "dpo", "data protection", "/privacy", "/legal")):
+            if url_art and url_art not in privacy_artifacts:
+                privacy_artifacts.append(url_art)
+            if row_code and row_code not in privacy_codes:
+                privacy_codes.append(row_code)
+        if any(
+            k in low_blob
+            for k in ("workflow", "booking", "payment", "billing", "account", "refund", "invoice", "support flow")
+        ):
+            if url_art and url_art not in workflow_artifacts:
+                workflow_artifacts.append(url_art)
+        if str(ev.get("signal_type", "")).strip().upper() == "VENDOR_CUE":
+            vendor_art = _clip_artifact(str(ev.get("title", "") or str(ev.get("domain", "") or "")).strip(), max_chars=80)
+            if vendor_art and vendor_art not in vendor_artifacts:
+                vendor_artifacts.append(vendor_art)
+        for role in ("finance", "it", "privacy", "security", "support", "billing", "procurement"):
+            if role in low_blob and role not in role_hits:
+                role_hits.append(role)
+            if role in low_blob and role not in role_codes:
+                role_code = row_code or _code_from_artifact(f"role: {role}")
+                if role_code:
+                    role_codes[role] = role_code
+
+    for line in hint_lines:
+        blobs.append(line)
+        low_line = line.lower()
+        for em in EMAIL_PATTERN.findall(line):
+            low = em.lower()
+            if low and low not in emails:
+                emails.append(low)
+            if low and low not in email_codes:
+                mapped = _code_from_artifact(low)
+                if mapped:
+                    email_codes[low] = mapped
+        for ph in PHONE_PATTERN.findall(line):
+            normalized = " ".join(str(ph).split())
+            if normalized and normalized not in phones:
+                phones.append(normalized)
+            if normalized and normalized not in phone_codes:
+                mapped = _code_from_artifact(normalized)
+                if mapped:
+                    phone_codes[normalized] = mapped
+        for role in ROLE_HINTS:
+            if role in low_line and role not in role_hits:
+                role_hits.append(role)
+            if role in low_line and role not in role_codes:
+                mapped = _code_from_artifact(f"role: {role}")
+                if mapped:
+                    role_codes[role] = mapped
+        if "http" in low_line or "/" in low_line:
+            art = _artifact_from_url(line.split(" ", 1)[-1])
+            if art and art not in page_artifacts:
+                page_artifacts.append(art)
+            if art and art not in page_codes:
+                mapped = _code_from_artifact(art)
+                if mapped:
+                    page_codes[art] = mapped
+        if any(k in low_line for k in ("privacy", "legal", "gdpr", "dpo", "data protection")):
+            candidate = ""
+            if page_artifacts:
+                candidate = page_artifacts[0]
+            elif emails:
+                candidate = next((x for x in emails if any(t in x for t in ("privacy", "legal", "dpo"))), "")
+            if candidate and candidate not in privacy_artifacts:
+                privacy_artifacts.append(candidate)
+            mapped = _code_from_artifact(candidate)
+            if mapped and mapped not in privacy_codes:
+                privacy_codes.append(mapped)
+    all_blob = " ".join(blobs).lower()
+
+    if emails:
+        email_artifact = _clip_artifact(emails[0], max_chars=80)
+        email_code = _first_valid_code([email_codes.get(emails[0], ""), _code_from_artifact(email_artifact)])
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Public contact email exposed", email_artifact),
+            tags=["contact", "email", "identity"],
+            max_items=max_items,
+            code=email_code,
+        )
+
+    if any(k in all_blob for k in ("privacy", "legal", "gdpr", "dpo", "data protection")):
+        privacy_artifact = ""
+        if privacy_artifacts:
+            privacy_artifact = privacy_artifacts[0]
+        elif emails:
+            em = next((x for x in emails if any(t in x for t in ("privacy", "legal", "dpo"))), "")
+            privacy_artifact = em or ""
+        privacy_code = _first_valid_code(
+            [
+                _code_from_artifact(privacy_artifact),
+                privacy_codes[0] if privacy_codes else "",
+                email_codes.get(privacy_artifact.lower(), ""),
+            ]
+        )
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Public privacy/legal channel exposed", privacy_artifact),
+            tags=["privacy", "legal", "identity", "contact"],
+            max_items=max_items,
+            code=privacy_code,
+        )
+
+    contact_like_urls: set[str] = set()
+    for ev in rows:
+        st = str(ev.get("signal_type", "")).strip().upper()
+        ek = str(ev.get("evidence_kind", "")).strip().upper()
+        blob = " ".join([str(ev.get("title", "") or ""), str(ev.get("snippet", "") or ""), str(ev.get("url", "") or "")]).lower()
+        if st == "CONTACT_CHANNEL" or ek == "CONTACT_CHANNEL" or any(
+            tok in blob for tok in ("contact", "support", "help", "form", "privacy", "legal", "policy")
+        ):
+            cu = str(ev.get("canonical_url", "") or "").strip() or str(ev.get("url", "") or "").strip()
+            if cu:
+                contact_like_urls.add(cu[:220])
+            row_code = str(code_map.get(_evidence_identity_key(ev), "")).strip().upper()
+            if row_code and row_code not in contact_like_codes:
+                contact_like_codes.append(row_code)
+    for line in hint_lines:
+        low = line.lower()
+        if any(tok in low for tok in ("contact", "support", "help", "form", "privacy", "legal", "policy", "channel")):
+            contact_like_urls.add(low[:220])
+            for em in EMAIL_PATTERN.findall(line):
+                mapped = _code_from_artifact(em.lower())
+                if mapped and mapped not in contact_like_codes:
+                    contact_like_codes.append(mapped)
+    if len(contact_like_urls) >= 2:
+        entry_artifacts: list[str] = []
+        if page_artifacts:
+            entry_artifacts.append(page_artifacts[0])
+        if emails:
+            entry_artifacts.append(emails[0])
+        elif phones:
+            entry_artifacts.append(phones[0])
+        entry_code = _first_valid_code(
+            [
+                contact_like_codes[0] if contact_like_codes else "",
+                page_codes.get(entry_artifacts[0], "") if entry_artifacts else "",
+                email_codes.get(emails[0], "") if emails else "",
+            ]
+        )
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Multiple official entrypoints", " + ".join(entry_artifacts[:2]) or "form + email + page"),
+            tags=["entrypoint", "channel", "contact", "ambiguity"],
+            max_items=max_items,
+            code=entry_code,
+        )
+
+    if role_hits:
+        role_code = ""
+        for role in role_hits:
+            rc = role_codes.get(role, "")
+            if rc:
+                role_code = rc
+                break
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Public role cues", "/".join(role_hits[:3])),
+            tags=["role", "staff", "identity"] + role_hits[:3],
+            max_items=max_items,
+            code=role_code,
+        )
+
+    signal_set = {str(ev.get("signal_type", "")).strip().upper() for ev in rows if str(ev.get("signal_type", "")).strip()}
+    if "PROCESS_CUE" in signal_set:
+        wf_artifact = workflow_artifacts[0] if workflow_artifacts else (page_artifacts[0] if page_artifacts else "")
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Public workflow handling cues exposed", wf_artifact),
+            tags=["workflow", "process", "request"],
+            max_items=max_items,
+            code=_first_valid_code([signal_type_codes.get("PROCESS_CUE", ""), _code_from_artifact(wf_artifact)]),
+        )
+    if "VENDOR_CUE" in signal_set:
+        vendor_artifact = vendor_artifacts[0] if vendor_artifacts else ""
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Public vendor/platform cues exposed", vendor_artifact),
+            tags=["vendor", "platform", "third-party"],
+            max_items=max_items,
+            code=_first_valid_code([signal_type_codes.get("VENDOR_CUE", ""), _code_from_artifact(vendor_artifact)]),
+        )
+    if "INFRA_CUE" in signal_set:
+        infra_artifact = page_artifacts[0] if page_artifacts else ""
+        _add_signal_ref(
+            refs,
+            seen=seen,
+            text=_with_artifact("Public support/portal endpoints exposed", infra_artifact),
+            tags=["infra", "portal", "endpoint", "page"],
+            max_items=max_items,
+            code=_first_valid_code([signal_type_codes.get("INFRA_CUE", ""), _code_from_artifact(infra_artifact)]),
+        )
+
+    if not refs:
+        for line in _sample_signal_lines(rows, max_items=min(4, max_items)):
+            hint_code = ""
+            em = EMAIL_PATTERN.search(line)
+            if em:
+                hint_code = _code_from_artifact(em.group(0).lower())
+            if not hint_code:
+                for role in ROLE_HINTS:
+                    if role in line.lower():
+                        hint_code = _code_from_artifact(f"role: {role}")
+                        if hint_code:
+                            break
+            _add_signal_ref(
+                refs,
+                seen=seen,
+                text=line,
+                tags=["signal"],
+                max_items=max_items,
+                code=hint_code,
+            )
+    # Final fallback: surface concrete correlated hints (emails/phones/roles/pages) if still not present.
+    if len(refs) < max_items:
+        for line in hint_lines:
+            clean = " ".join(str(line or "").split()).strip()
+            if not clean:
+                continue
+            low = clean.lower()
+            tags: list[str] = ["signal"]
+            hint_code = ""
+            if EMAIL_PATTERN.search(clean):
+                tags += ["email", "contact", "identity"]
+                email_match = EMAIL_PATTERN.search(clean)
+                if email_match:
+                    email_artifact = _clip_artifact(email_match.group(0), max_chars=80)
+                    clean = _with_artifact("Public contact email exposed", email_artifact)
+                    hint_code = _first_valid_code(
+                        [email_codes.get(email_match.group(0).lower(), ""), _code_from_artifact(email_artifact)]
+                    )
+            elif PHONE_PATTERN.search(clean):
+                tags += ["contact", "phone", "identity"]
+                phone_match = PHONE_PATTERN.search(clean)
+                if phone_match:
+                    hint_code = _first_valid_code(
+                        [phone_codes.get(" ".join(str(phone_match.group(0)).split()), ""), _code_from_artifact(phone_match.group(0))]
+                    )
+            elif any(k in low for k in ("privacy", "legal", "dpo", "gdpr")):
+                tags += ["privacy", "legal", "identity"]
+                hint_code = _first_valid_code([privacy_codes[0] if privacy_codes else "", _code_from_artifact(clean)])
+            elif any(k in low for k in ROLE_HINTS):
+                tags += ["role", "staff", "identity"]
+                for role in ROLE_HINTS:
+                    if role in low:
+                        hint_code = _first_valid_code([role_codes.get(role, ""), _code_from_artifact(f"role: {role}")])
+                        if hint_code:
+                            break
+            elif "http" in low or "/" in low:
+                tags += ["entrypoint", "page", "channel"]
+                hint_code = _code_from_artifact(_artifact_from_url(clean))
+            _add_signal_ref(refs, seen=seen, text=clean, tags=tags, max_items=max_items, code=hint_code)
+            if len(refs) >= max_items:
+                break
+    return refs[:max_items]
+
+
+def _refs_for_bundle(
+    bundle: dict[str, Any],
+    refs: list[dict[str, Any]],
+    *,
+    bundle_evidence: list[dict[str, Any]] | None = None,
+    evidence_code_map: dict[str, str] | None = None,
+    artifact_code_map: dict[str, str] | None = None,
+    max_items: int = 10,
+) -> list[dict[str, str]]:
+    if not refs and not bundle_evidence:
+        return []
+    btype = str(bundle.get("bundle_type", "")).strip().upper()
+    wanted_map = {
+        "IDENTITY_SIGNALS": {"contact", "email", "privacy", "legal", "role", "identity", "staff"},
+        "CHANNEL_AMBIGUITY": {"entrypoint", "ambiguity", "contact", "channel", "page", "form"},
+        "INFORMAL_WORKFLOW": {"workflow", "process", "request"},
+        "VENDOR_DEPENDENCY": {"vendor", "platform", "third-party"},
+        "INFRA_ENDPOINTS": {"infra", "portal", "endpoint", "page"},
+        "EXTERNAL_VISIBILITY": {"visibility", "external", "news"},
+    }
+    wanted = wanted_map.get(btype, set())
+    selected: list[dict[str, str]] = []
+    selected_keys: set[str] = set()
+    for ref in refs:
+        tags = {str(x).strip().lower() for x in (ref.get("tags") or []) if str(x).strip()}
+        if wanted and tags and not tags.intersection(wanted):
+            continue
+        text = " ".join(str(ref.get("text", "")).split()).strip()
+        code = " ".join(str(ref.get("code", "")).split()).strip()
+        if not text:
+            continue
+        key = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()[:180]
+        if not key or key in selected_keys:
+            continue
+        selected_keys.add(key)
+        selected.append({"code": code, "text": text})
+        if len(selected) >= max_items:
+            break
+    if not selected and bundle_evidence:
+        local = _build_coded_signal_refs(
+            list(bundle_evidence or []),
+            evidence_code_map=evidence_code_map,
+            artifact_code_map=artifact_code_map,
+            max_items=max_items,
+        )
+        if local:
+            return [
+                {"code": str(x.get("code", "")), "text": str(x.get("text", ""))}
+                for x in local[:max_items]
+                if str(x.get("code", "")).strip() and str(x.get("text", "")).strip()
+            ]
+    if not selected and refs:
+        text = " ".join(str(refs[0].get("text", "")).split()).strip()
+        code = " ".join(str(refs[0].get("code", "")).split()).strip()
+        if text:
+            selected.append({"code": code, "text": text})
+    return selected[:max_items]
+
+
+def _ref_keywords(ref: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for tag in ref.get("tags") or []:
+        t = str(tag or "").strip().lower()
+        if t:
+            out.add(t)
+    for tok in re.findall(r"[a-z0-9]{3,}", str(ref.get("text", "")).lower()):
+        if tok in _REF_KEYWORD_STOPWORDS:
+            continue
+        out.add(tok)
+    return out
+
+
+def _inject_evidence_codes_in_how(text: str, refs: list[dict[str, Any]]) -> str:
+    raw = " ".join(str(text or "").split()).strip()
+    if not raw or not refs:
+        return raw
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", raw) if p.strip()]
+    if not parts:
+        return raw
+    meta = [(str(r.get("code", "")).strip(), _ref_keywords(r)) for r in refs if str(r.get("code", "")).strip()]
+    if not meta:
+        return raw
+
+    out: list[str] = []
+    for idx, sentence in enumerate(parts):
+        s = sentence.strip()
+        if not s:
+            continue
+        existing = set(re.findall(r"E-\d{2,3}", s))
+        matched: list[str] = sorted(existing) if existing else []
+        if not matched:
+            low = s.lower()
+            for code, kws in meta:
+                if not kws:
+                    continue
+                if any(k in low for k in kws):
+                    matched.append(code)
+            dedup_codes: list[str] = []
+            for code in matched:
+                if code not in dedup_codes:
+                    dedup_codes.append(code)
+            matched = dedup_codes[:3]
+        if idx == 0 and not matched:
+            matched = [meta[0][0]]
+        if matched and not existing:
+            tail = ""
+            core = s
+            if core[-1] in ".!?":
+                tail = core[-1]
+                core = core[:-1].rstrip()
+            s = f"{core} [{', '.join(matched)}]{tail}"
+        out.append(s)
+    return " ".join(out).strip()
 
 
 def _signal_type_from_evidence_row(*, url: str, title: str, snippet: str, evidence_kind: str, category: str) -> str:
@@ -612,7 +1514,9 @@ def _reasoning_block_for_risk(
         seen_keys.add(key)
         deduped.append(line)
     deduped.sort(key=lambda x: (_hint_priority(x), len(x)))
-    sample_signals = deduped[:3]
+    coded_only = [x for x in deduped if re.match(r"^E-\d{2,3}\b", str(x or "").strip(), flags=re.IGNORECASE)]
+    sample_pool = coded_only if coded_only else deduped
+    sample_signals = sample_pool[:10] if len(sample_pool) > 10 else sample_pool
 
     supplemental_indicator_count = min(max(0, len(supplemental_hints or [])), 4)
     display_refs = int(refs) + int(supplemental_indicator_count) if supplemental_indicator_count > 0 else int(refs)
@@ -625,7 +1529,7 @@ def _reasoning_block_for_risk(
     if bundle_phrase:
         what_we_saw += f" Key conditions: {bundle_phrase}."
     if sample_signals:
-        what_we_saw += " Sample signals: " + "; ".join([f"{idx + 1}) {s}" for idx, s in enumerate(sample_signals)])
+        what_we_saw += " Sample signals: " + "; ".join(sample_signals)
 
     why_context = str(risk.get("why_matters", "") or risk_vector_summary or "")
     why_it_matters = _why_it_matters_cti(
@@ -2984,10 +3888,25 @@ def build_risk_detail_viewmodel(
         }
 
     ranked_snapshot = get_ranked_risks(db, assessment)
+    evidence_code_map = build_assessment_evidence_code_map(db, assessment, ranked_snapshot=ranked_snapshot)
+    artifact_code_map = build_assessment_artifact_code_map(
+        db,
+        assessment,
+        ranked_snapshot=ranked_snapshot,
+        evidence_code_map=evidence_code_map,
+    )
+    code_document_map = build_assessment_code_document_map(
+        db,
+        assessment,
+        ranked_snapshot=ranked_snapshot,
+        evidence_code_map=evidence_code_map,
+    )
     ranked_all = list(ranked_snapshot.get("all_unfiltered") or [])
     ranked_row = next((item for item in ranked_all if int(item.get("id", 0) or 0) == rid), None)
     connectors_by_url = dict(ranked_snapshot.get("connectors_by_url") or {})
     indicator_hints_by_url = dict(ranked_snapshot.get("indicator_hints_by_url") or {})
+    signal_hints_by_type = dict(ranked_snapshot.get("signal_hints_by_type") or {})
+    signal_connectors_by_type = dict(ranked_snapshot.get("signal_connectors_by_type") or {})
 
     # Prefetch documents referenced by this risk and by workflow nodes.
     refs = from_json(row.evidence_refs_json or "[]", [])
@@ -3127,8 +4046,39 @@ def build_risk_detail_viewmodel(
             conditions=ingredient_phrases[:3],
             process_flags=parsed.process_flags,
         )
+    risk_headline = _single_risk_headline(
+        primary_risk_type=primary_risk_type,
+        title=title,
+        risk_vector_summary=risk_vector_summary,
+    )
     for b in bundles:
         evidence_sets[f"bundle:{b.get('id')}"] = list(b.get("evidence") or [])
+    risk_evidence_pool = list(evidence_sets.get(f"risk:{rid}", []) or [])
+    risk_signal_types = {
+        str(ev.get("signal_type", "")).strip().upper()
+        for ev in (risk_evidence_pool or [])
+        if str(ev.get("signal_type", "")).strip()
+    }
+    target_signals = [k for k, v in (counts or {}).items() if int(v or 0) > 0 and k in SIGNAL_TYPES]
+    if not target_signals:
+        target_signals = sorted(list(risk_signal_types))
+    supplemental_hints: list[str] = []
+    supplemental_connectors_set: set[str] = set()
+    for st in target_signals:
+        for hint in signal_hints_by_type.get(st, []):
+            line = " ".join(str(hint or "").split()).strip()
+            if line and line not in supplemental_hints:
+                supplemental_hints.append(line)
+        supplemental_connectors_set.update(signal_connectors_by_type.get(st, set()))
+    supplemental_hints.sort(key=lambda x: (_hint_priority(x), len(x)))
+    coded_signal_refs = _build_coded_signal_refs(
+        risk_evidence_pool,
+        extra_hints=supplemental_hints[:12],
+        evidence_code_map=evidence_code_map,
+        artifact_code_map=artifact_code_map,
+        max_items=8,
+    )
+    coded_signal_lines = [f"{str(x.get('code', ''))} {str(x.get('text', ''))}".strip() for x in coded_signal_refs]
 
     confirm_points: list[str] = []
     deny_points: list[str] = []
@@ -3240,6 +4190,7 @@ def build_risk_detail_viewmodel(
         "risk_type": str(row.risk_type or "other"),
         "status": current_status,
         "primary_risk_type": primary_risk_type,
+        "headline": risk_headline,
         "risk_vector_summary": risk_vector_summary,
         "baseline_tag": bool(getattr(row, "baseline_tag", False)),
         "title": title,
@@ -3254,15 +4205,31 @@ def build_risk_detail_viewmodel(
         "evidence_strength_score": int(conf),
         "timeline": timeline[:7] if isinstance(timeline, list) else [],
     }
-    if isinstance(ranked_row, dict) and isinstance(ranked_row.get("reasoning"), dict):
-        risk_reasoning = dict(ranked_row.get("reasoning") or {})
-    else:
-        risk_reasoning = _reasoning_block_for_risk(
-            risk=risk,
-            evidence=list(evidence_sets.get(f"risk:{rid}", []) or []),
-            recipe_bundles=recipe_bundles,
-            risk_vector_summary=risk_vector_summary,
+    risk_reasoning = _reasoning_block_for_risk(
+        risk=risk,
+        evidence=list(evidence_sets.get(f"risk:{rid}", []) or []),
+        recipe_bundles=recipe_bundles,
+        risk_vector_summary=risk_vector_summary,
+        supplemental_hints=coded_signal_lines,
+        supplemental_connectors=sorted(list(supplemental_connectors_set), key=_connector_sort_key)[:5],
+    )
+    signal_links: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    for ref in coded_signal_refs:
+        code = " ".join(str(ref.get("code", "")).split()).strip().upper()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        doc_id = code_document_map.get(code)
+        signal_links.append(
+            {
+                "code": code,
+                "doc_id": int(doc_id) if isinstance(doc_id, int) and doc_id > 0 else None,
+                "doc_url": f"/documents/{int(doc_id)}" if isinstance(doc_id, int) and doc_id > 0 else "",
+            }
         )
+    if signal_links:
+        risk_reasoning["signal_links"] = signal_links
     if allow_generated_text:
         try:
             how_text = get_or_generate_how_text(
@@ -3278,7 +4245,7 @@ def build_risk_detail_viewmodel(
                 confidence=int(conf),
             )
             if str(how_text or "").strip():
-                risk_reasoning["how"] = str(how_text).strip()
+                risk_reasoning["how"] = _inject_evidence_codes_in_how(str(how_text).strip(), coded_signal_refs)
         except Exception:
             logger.exception("Failed to build risk HOW narrative for assessment %s risk %s", assessment_id, rid)
             try:
@@ -3328,17 +4295,42 @@ def build_risk_detail_viewmodel(
         ],
     }
 
-    story_signals = [
-        {
-            "id": f"sig:{b.get('id')}",
-            "title": str(b.get("title", "")),
-            "detail": f"{int(b.get('item_count', 0) or 0)} items",
-            "icon": str(b.get("icon", "sparkles")),
-            "evidence_set_id": f"bundle:{b.get('id')}",
-        }
-        for b in (recipe_bundles or [])[:6]
-    ]
-    risk_evidence_pool = list(evidence_sets.get(f"risk:{rid}", []) or [])
+    story_signals = []
+    used_signal_ref_keys: set[str] = set()
+    for b in (recipe_bundles or [])[:6]:
+        bundle_set_id = f"bundle:{b.get('id')}"
+        bundle_evidence = list(evidence_sets.get(bundle_set_id, []) or [])
+        refs_for_bundle_raw = _refs_for_bundle(
+            b,
+            coded_signal_refs,
+            bundle_evidence=bundle_evidence,
+            evidence_code_map=evidence_code_map,
+            artifact_code_map=artifact_code_map,
+            max_items=10,
+        )
+        refs_for_bundle: list[dict[str, str]] = []
+        for ref in refs_for_bundle_raw:
+            text = " ".join(str(ref.get("text", "")).split()).strip()
+            code = " ".join(str(ref.get("code", "")).split()).strip()
+            if not text:
+                continue
+            key = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()[:180]
+            if not key or key in used_signal_ref_keys:
+                continue
+            used_signal_ref_keys.add(key)
+            refs_for_bundle.append({"code": code, "text": text})
+            if len(refs_for_bundle) >= 10:
+                break
+        story_signals.append(
+            {
+                "id": f"sig:{b.get('id')}",
+                "title": str(b.get("title", "")),
+                "detail": f"{int(b.get('item_count', 0) or 0)} items",
+                "icon": str(b.get("icon", "sparkles")),
+                "evidence_set_id": bundle_set_id,
+                "evidence_refs": refs_for_bundle,
+            }
+        )
     story_abuse_path = []
     for idx, step in enumerate((risk.get("timeline") or [])[:6], start=1):
         if not isinstance(step, dict):

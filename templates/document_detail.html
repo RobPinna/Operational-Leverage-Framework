@@ -47,9 +47,25 @@
     </div>
 
     <div class="mt-3">
+      <p class="text-slate-400 text-xs uppercase">Evidence Codes</p>
+      <div class="mt-1 flex gap-2 flex-wrap">
+        {% for code in evidence_codes %}
+        <span class="badge doc-evidence-code">{{ code }}</span>
+        {% else %}
+        <span class="text-xs text-slate-500">No mapped evidence codes for this document.</span>
+        {% endfor %}
+      </div>
+      {% if artifact_terms %}
+      <p class="mt-2 text-xs text-slate-400">
+        Highlighted evidence terms: {{ artifact_terms | join(', ') }}
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="mt-3">
       <p class="text-slate-400 text-xs uppercase">Extracted Text</p>
       <div class="mt-1 rounded border border-slate-700 bg-slate-900/60 p-3 max-h-[560px] overflow-y-auto">
-        <pre class="text-xs text-slate-300 whitespace-pre-wrap">{{ document.extracted_text if document.extracted_text else 'No extracted text' }}</pre>
+        <pre class="text-xs text-slate-300 whitespace-pre-wrap">{{ highlighted_text | safe }}</pre>
       </div>
     </div>
   </section>

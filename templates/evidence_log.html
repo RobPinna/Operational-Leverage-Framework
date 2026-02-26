@@ -25,15 +25,20 @@
       <table class="w-full text-sm">
         <thead>
           <tr class="text-left text-slate-400 text-xs uppercase">
+            <th class="py-2 pr-4">Evidence</th>
             <th class="py-2 pr-4">Source</th>
             <th class="py-2 pr-4">Signal type</th>
             <th class="py-2 pr-4">Linked risks</th>
             <th class="py-2 pr-4">Weight</th>
+            <th class="py-2 pr-2 text-right">Document</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-800">
           {% for r in vm.rows %}
           <tr>
+            <td class="py-3 pr-4 align-top">
+              <span class="badge doc-evidence-code">{{ r.evidence_code }}</span>
+            </td>
             <td class="py-3 pr-4 align-top">
               <div class="space-y-1">
                 {% if r.open_risk_url %}
@@ -44,12 +49,16 @@
                 <span class="text-slate-200">{{ r.canonical_url }}</span>
                 {% endif %}
                 <div class="text-xs text-slate-400 clamp-2">{{ r.snippet }}</div>
+                {% if r.artifacts %}
+                <div class="flex gap-2 flex-wrap items-center text-xs text-slate-300">
+                  {% for art in r.artifacts %}
+                  <span class="badge doc-evidence-code">{{ art }}</span>
+                  {% endfor %}
+                </div>
+                {% endif %}
                 <div class="flex gap-2 flex-wrap items-center text-xs text-slate-400">
                   {% if r.url %}
                   <a class="badge" href="{{ r.url }}" target="_blank" rel="noreferrer">Open source</a>
-                  {% endif %}
-                  {% if r.doc_id %}
-                  <a class="badge" href="/documents/{{ r.doc_id }}">Document</a>
                   {% endif %}
                   <span class="badge">Confidence: {{ r.confidence }}%</span>
                   {% if r.occurrences and r.occurrences > 1 %}
@@ -59,10 +68,16 @@
               </div>
             </td>
             <td class="py-3 pr-4 align-top">
-              <span class="badge">{{ r.signal_type }}</span>
+              <div class="flex gap-2 flex-wrap items-center">
+                {% for st in r.signal_types %}
+                <span class="badge">{{ st }}</span>
+                {% else %}
+                <span class="badge">{{ r.signal_type }}</span>
+                {% endfor %}
+              </div>
             </td>
             <td class="py-3 pr-4 align-top">
-              <div class="flex flex-wrap gap-2">
+              <div class="evidence-linked-risks">
                 {% for rr in r.linked_risks %}
                 <a class="badge" href="/assessments/{{ assessment.id }}/risks/{{ rr.id }}">{{ rr.title }}</a>
                 {% else %}
@@ -72,6 +87,13 @@
             </td>
             <td class="py-3 pr-4 align-top">
               <span class="badge" data-tooltip="Evidence weight: boilerplate/meta evidence is down-weighted.">{{ '%.2f'|format(r.weight) }}</span>
+            </td>
+            <td class="py-3 pr-2 align-top text-right">
+              {% if r.doc_id %}
+              <a class="btn-primary text-xs" href="/documents/{{ r.doc_id }}">Document</a>
+              {% else %}
+              <span class="text-xs text-slate-500">-</span>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}

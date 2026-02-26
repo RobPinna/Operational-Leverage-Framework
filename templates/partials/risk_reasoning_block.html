@@ -39,6 +39,7 @@
   {% endif %}
 {% endfor %}
 {% set _how_text = (reasoning.how or '') | trim %}
+{% set _signal_links = reasoning.signal_links if reasoning.signal_links is defined and reasoning.signal_links else [] %}
 {% set _full_text = reasoning_full_text if reasoning_full_text is defined else false %}
 <div class="mt-3 grid grid-cols-1 {% if not _compact %}sm:grid-cols-2{% endif %} gap-2">
   <article class="info-card compact">
@@ -65,7 +66,26 @@
         {% set _sig_text = _sig | trim %}
         {% if _sig_text %}
           {% set _wws_ns.has_signal = true %}
-          <div class="wws-line"><span class="wws-indent-1"></span><span class="wws-signal-text">"{{ _sig_text | replace('"', '\\"') }}"</span></div>
+          {% set _sig_code = _sig_text.split(' ', 1)[0] if _sig_text[:2] == 'E-' else '' %}
+          {% set _sig_link = namespace(url='') %}
+          {% if _sig_code and _signal_links %}
+            {% for _sl in _signal_links %}
+              {% if _sl.code == _sig_code and _sl.doc_url %}
+                {% set _sig_link.url = _sl.doc_url %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          <div class="wws-line wws-signal-row">
+            <span class="wws-indent-1"></span>
+            {% if _sig_text[:2] == 'E-' %}
+            <span class="wws-signal-text">{{ _sig_text }}</span>
+            {% else %}
+            <span class="wws-signal-text">"{{ _sig_text | replace('"', '\\"') }}"</span>
+            {% endif %}
+            {% if _sig_link.url %}
+            <a class="wws-signal-link" href="{{ _sig_link.url }}" title="Open evidence document detail" aria-label="Open evidence document detail">&#8599;</a>
+            {% endif %}
+          </div>
         {% endif %}
       {% endfor %}
       {% if not _wws_ns.has_signal %}
@@ -80,9 +100,50 @@
     {% if _how_text %}
     <div class="mt-3">
       <p class="kpi-label">How</p>
-      <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words {% if _full_text %}line-clamp-none max-h-none overflow-visible{% endif %}">{{ _how_text }}</p>
+      <p class="item-description mt-1 {% if _compact %}text-xs{% else %}text-sm{% endif %} text-slate-300 whitespace-normal break-words {% if _full_text %}line-clamp-none max-h-none overflow-visible{% endif %}" data-how-code-highlight="1">{{ _how_text }}</p>
     </div>
     {% endif %}
   </article>
 </div>
+<script>
+  (function () {
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function styleHowEvidenceCodes(root) {
+      var scope = root || document;
+      var nodes = scope.querySelectorAll('[data-how-code-highlight="1"]:not([data-how-processed="1"])');
+      for (var i = 0; i < nodes.length; i += 1) {
+        var node = nodes[i];
+        var raw = node.textContent || "";
+        var safe = escapeHtml(raw);
+        safe = safe.replace(
+          /\[(E-\d{2,3}(?:\s*,\s*E-\d{2,3})*)\]/g,
+          '<span class="wws-signal-text">[$1]</span>'
+        );
+        node.innerHTML = safe;
+        node.setAttribute("data-how-processed", "1");
+      }
+    }
+
+    if (window.__applyHowEvidenceCodeStyling) {
+      window.__applyHowEvidenceCodeStyling(document);
+      return;
+    }
+    window.__applyHowEvidenceCodeStyling = styleHowEvidenceCodes;
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", function () {
+        styleHowEvidenceCodes(document);
+      });
+      return;
+    }
+    styleHowEvidenceCodes(document);
+  })();
+</script>
 {% endif %}

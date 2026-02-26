@@ -1487,6 +1487,53 @@ i[data-lucide],
   color: #f6d88f;
 }
 
+.wws-signal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.42rem;
+}
+
+.wws-signal-link {
+  color: #f6d88f;
+  text-decoration: none;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.wws-signal-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.doc-evidence-code {
+  border-color: rgba(248, 223, 148, 0.44);
+  background: rgba(246, 207, 114, 0.16);
+  color: #fff0c6;
+}
+
+.evidence-linked-risks {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  align-items: center;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.evidence-linked-risks .badge {
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.doc-evidence-hl {
+  background: rgba(246, 216, 143, 0.28);
+  color: #fff2cf;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
 /* Accordions and modals */
 .accordion-item {
   border: 1px solid rgba(255, 255, 255, 0.06);

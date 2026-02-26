@@ -315,6 +315,12 @@ def _story_column_html(
         title = _pdf_text(card.get("title", ""))
         detail = _pdf_text(card.get("detail", ""))
         chunks.append(f"<b>{idx}. {title}</b><br/>{detail}")
+        ref_items = list(card.get("evidence_refs") or [])
+        for ref in ref_items:
+            code = _pdf_text(ref.get("code", ""))
+            text = _pdf_text(ref.get("text", ""))
+            if code and text:
+                chunks.append(f"&nbsp;&nbsp;- {code} {text}")
         set_id = str(card.get("evidence_set_id", "") or "")
         ev_rows = list(evidence_sets.get(set_id, []) or [])
         for ev in ev_rows:
@@ -347,6 +353,12 @@ def _append_story_map_column(
         story.append(Paragraph(f"<b>{idx}. {title}</b>", body_style))
         if detail:
             story.append(Paragraph(detail, body_style))
+        ref_items = list(card.get("evidence_refs") or [])
+        for ref in ref_items:
+            code = _pdf_text(ref.get("code", ""))
+            text = _pdf_text(ref.get("text", ""))
+            if code and text:
+                story.append(Paragraph(f"&nbsp;&nbsp;- {code} {text}", body_style))
         set_id = str(card.get("evidence_set_id", "") or "")
         ev_rows = list(evidence_sets.get(set_id, []) or [])
         for ev in ev_rows:
